@@ -969,6 +969,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_BUNDLED_ROOTS_FALLBACK",
+      "category": "Registry TLS / proxy",
+      "description": "The system trust store yielded no CA certificates (minimal container without `ca-certificates`, or `SSL_CERT_FILE`/`SSL_CERT_DIR` naming nothing readable), so aube trusts its bundled Mozilla roots instead. Never emitted when any system root loads.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_UNSUPPORTED_PLATFORM_INSTALL",
       "category": "Resolver",
       "description": "A required (non-optional) dep declared a platform aube doesn't satisfy; installing anyway.",
