@@ -34,13 +34,6 @@ pub(crate) fn activated_shim_dir() -> Option<PathBuf> {
         .and_then(single_path_entry)
 }
 
-/// Restore the activated shim dir after the project bins for user commands
-/// (`exec`, `dlx`, `run <bin>`). Startup strips it from aube's own `PATH`, so
-/// without this those children would resolve the real `npm`/`pnpm`/`yarn`.
-pub(crate) fn push_activated_shim_dir(entries: &mut Vec<PathBuf>) {
-    entries.extend(activated_shim_dir());
-}
-
 fn single_path_entry(value: OsString) -> Option<PathBuf> {
     let path = PathBuf::from(&value);
     let mut entries = std::env::split_paths(&value);
