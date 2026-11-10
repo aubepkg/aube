@@ -198,6 +198,29 @@ mod tests {
     use super::*;
     use crate::compression::{Gate, Support, compress_bytes_with};
 
+    #[test]
+    #[cfg(unix)]
+    fn plain_fallback_publishes_world_readable_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("addon.node");
+        // Exercise the importer fallback, including replacement of a private file.
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        compress_bytes_with(
+            &BrokenBackend { fail: true },
+            &path,
+            b"original",
+            &Gate::any(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        assert_eq!(std::fs::read(path).unwrap(), b"original");
+    }
+
     struct BrokenBackend {
         fail: bool,
     }

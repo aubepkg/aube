@@ -415,7 +415,17 @@ fn plain_write(path: &Path, content: &[u8]) -> Result<(), Error> {
             source,
         })?;
     temp.write_all(content)
-        .and_then(|()| temp.as_file().sync_all())
+        .and_then(|()| {
+            // Keep incomplete bytes private; publish the completed CAS file
+            // with the same permissions as the ordinary store writer.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                temp.as_file()
+                    .set_permissions(std::fs::Permissions::from_mode(0o644))?;
+            }
+            temp.as_file().sync_all()
+        })
         .map_err(|source| Error::Io {
             context: "plain write temp",
             source,
