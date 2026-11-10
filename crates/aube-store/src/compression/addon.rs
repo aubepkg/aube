@@ -251,12 +251,18 @@ mod decode_tests {
         assert_eq!(decoded, raw);
         let mut after = unsafe { std::mem::zeroed::<libc::rusage>() };
         assert_eq!(unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut after) }, 0);
+        // getrusage reports peak RSS in KiB on Linux and bytes on macOS.
+        // Convert both to decimal MB before displaying one decimal place.
+        #[cfg(target_os = "linux")]
+        const RSS_UNIT_BYTES: f64 = 1024.0;
+        #[cfg(target_os = "macos")]
+        const RSS_UNIT_BYTES: f64 = 1.0;
         println!(
             "mode={mode} raw_mb={:.1} compressed_mb={:.1} before_peak_mb={:.1} after_peak_mb={:.1}",
             raw.len() as f64 / 1_000_000.0,
             payload.len() as f64 / 1_000_000.0,
-            before.ru_maxrss as f64 / 1_000_000.0,
-            after.ru_maxrss as f64 / 1_000_000.0
+            before.ru_maxrss as f64 * RSS_UNIT_BYTES / 1_000_000.0,
+            after.ru_maxrss as f64 * RSS_UNIT_BYTES / 1_000_000.0
         );
         std::hint::black_box(decoded);
     }
