@@ -176,10 +176,8 @@ struct ScriptSettingsState {
 static SCRIPT_SETTINGS: std::sync::OnceLock<std::sync::RwLock<ScriptSettingsState>> =
     std::sync::OnceLock::new();
 
-type ScriptSettingsSlot = std::sync::Arc<std::sync::RwLock<ScriptSettingsState>>;
-
 tokio::task_local! {
-    static INSTALL_SCRIPT_SETTINGS: ScriptSettingsSlot;
+    static INSTALL_SCRIPT_SETTINGS: std::sync::Arc<std::sync::RwLock<ScriptSettingsState>>;
 }
 
 /// Run an install with an isolated script-settings snapshot.

@@ -1,0 +1,175 @@
+name: warm build cache comparison
+on:
+  workflow_dispatch:
+    inputs:
+      diagnose_ticket_cache:
+        description: "Repeat ticket-cache tests under Cargo and Blaze instead of benchmarking"
+        type: boolean
+        default: false
+concurrency:
+  group: warm-build-cache-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+cache-mode: read
+jobs:
+  ticket-cache:
+    if: inputs.diagnose_ticket_cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8
+        with:
+          cache_save: false
+      - run: bash scripts/setup-build-volume.sh --benchmark
+      - run: sh scripts/setup-blaze.sh --github-env
+      - name: Repeat ticket-cache tests
+        run: |
+          sudo prlimit --pid $$ --memlock=67108864:67108864
+          bash scripts/check-ticket-cache.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: ticket-cache-diagnostics
+          path: build-memory-results/
+  macro-compat:
+    if: ${{ !inputs.diagnose_ticket_cache }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8
+        with:
+          cache_save: false
+      - run: bash scripts/setup-build-volume.sh --benchmark
+      - run: sh scripts/setup-blaze.sh --github-env
+      - name: Compare original and patched macro
+        run: |
+          sudo prlimit --pid $$ --memlock=67108864:67108864
+          bash scripts/check-blaze-macro.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: macro-compat
+          path: build-memory-results/
+  seed:
+    needs: macro-compat
+    cache-mode: write
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [cargo, blaze]
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8
+        with:
+          cache_save: false
+      - run: bash scripts/setup-build-volume.sh --benchmark
+      - run: sh scripts/setup-blaze.sh --github-env
+      - uses: jdx/mr-boxington-action@88acf2bb50552c7c508cbac13e5f8c576b95b1de
+        id: cache
+        with:
+          github-cache-mode: objects
+          isolate-objects-cache: true
+          cache-generation: warm-blaze-0.20261105.4-mbx-1.30.0-${{ matrix.compiler }}
+          cache-key: warm-build-btrfs-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}-${{ matrix.compiler }}
+          save-on-workflow-dispatch: true
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.compiler == 'blaze'
+        id: blaze-cache
+        with:
+          path: |
+            ${{ env.BLAZE_HOME }}
+            ${{ env.XDG_CACHE_HOME }}/blaze
+          key: blaze-btrfs-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-tools.json') }}-${{ github.sha }}
+          restore-keys: |
+            blaze-btrfs-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-tools.json') }}-
+      - name: Measure tests
+        env:
+          BENCH_COMPILER: ${{ matrix.compiler }}
+          BENCH_PHASE: seed
+          BENCH_MEMORY_MAX: infinity
+        run: bash scripts/measure-warm-build.sh
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.compiler == 'blaze' && steps.blaze-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ${{ env.BLAZE_HOME }}
+            ${{ env.XDG_CACHE_HOME }}/blaze
+          key: ${{ steps.blaze-cache.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: warm-cache-seed-${{ matrix.compiler }}
+          path: build-memory-results/
+  compare:
+    needs: seed
+    cache-mode: read
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [cargo, blaze]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8
+        with:
+          cache_save: false
+      - run: bash scripts/setup-build-volume.sh --benchmark
+      - run: sh scripts/setup-blaze.sh --github-env
+      - uses: jdx/mr-boxington-action@88acf2bb50552c7c508cbac13e5f8c576b95b1de
+        id: cache
+        with:
+          github-cache-mode: objects
+          isolate-objects-cache: true
+          cache-generation: warm-blaze-0.20261105.4-mbx-1.30.0-${{ matrix.compiler }}
+          cache-key: warm-build-btrfs-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}-${{ matrix.compiler }}
+          save-on-workflow-dispatch: false
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.compiler == 'blaze'
+        id: blaze-cache
+        with:
+          path: |
+            ${{ env.BLAZE_HOME }}
+            ${{ env.XDG_CACHE_HOME }}/blaze
+          key: blaze-btrfs-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-tools.json') }}-${{ github.sha }}
+          restore-keys: |
+            blaze-btrfs-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-tools.json') }}-
+      - name: Require a restored cache
+        env:
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+          BLAZE_HIT: ${{ steps.blaze-cache.outputs.cache-hit }}
+          COMPILER: ${{ matrix.compiler }}
+        run: |
+          test "$CACHE_HIT" = true
+          if [ "$COMPILER" = blaze ]; then test "$BLAZE_HIT" = true; fi
+      - name: Measure tests
+        env:
+          BENCH_COMPILER: ${{ matrix.compiler }}
+          BENCH_PHASE: compare
+        run: bash scripts/measure-warm-build.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: warm-cache-compare-${{ matrix.compiler }}
+          path: build-memory-results/

@@ -20,6 +20,10 @@ def main() -> int:
     for name, data in sorted(needs.items()):
         result = data.get("result", "unknown")
         expected = "success"
+        if name in ("ci", "ci-main"):
+            main_push = os.environ.get("MAIN_PUSH") == "true"
+            selected = "ci-main" if main_push else "ci"
+            expected = "success" if name == selected else "skipped"
         if name in CONDITIONAL:
             if changes["result"] != "success":
                 # Never decided whether this should run; `changes` reports the failure.

@@ -34,6 +34,7 @@ jobs:
     timeout-minutes: 20
     env:
       RUSTFLAGS: "-D warnings"
+      CARGO_BUILD_JOBS: "2"
     permissions:
       contents: read
     steps:
@@ -43,10 +44,40 @@ jobs:
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
+      - name: Prepare Blaze build volume
+        if: runner.os == 'Linux'
+        run: bash scripts/setup-build-volume.sh
+      - name: Activate prebuilt Rust build tools
+        if: runner.os == 'Linux'
+        run: sh scripts/setup-blaze.sh --github-env
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: runner.os == 'macOS' || runner.os == 'Linux'
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: runner.os == 'Linux'
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: mise run build
+          path: |
+            ${{ env.BLAZE_HOME }}
+            ${{ env.XDG_CACHE_HOME }}/blaze
+          key: blaze-btrfs-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-tools.json') }}-${{ github.job }}-${{ github.sha }}
+          restore-keys: |
+            blaze-btrfs-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-tools.json') }}-${{ github.job }}-
+      - uses: jdx/mr-boxington-action@88acf2bb50552c7c508cbac13e5f8c576b95b1de
+        if: runner.os == 'Linux'
+        with:
+          github-cache-mode: objects
+          cache-generation: blaze-0.20261105.4-mbx-1.30.0
+      - if: runner.os == 'Linux'
+        name: Build with Cargo until Blaze #1876 is released
+        run: MBX_BLAZE=0 MBX_DISABLE=1 cargo build
+      - name: Show Blaze startup failure
+        if: failure() && runner.os == 'Linux'
+        run: cat "$BLAZE_HOME/v2/serve.log" 2>/dev/null || true
+      - name: Stop Blaze before caching its state
+        if: always() && runner.os == 'Linux'
+        run: |
+          if [ -x .blaze/bin/blaze ]; then .blaze/bin/blaze stop; fi
+      - if: runner.os == 'macOS'
+        run: cargo build
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: aube-${{ matrix.os }}
@@ -63,6 +94,7 @@ jobs:
     timeout-minutes: 30
     env:
       RUSTFLAGS: "-D warnings"
+      CARGO_BUILD_JOBS: "2"
     permissions:
       contents: read
     steps:
@@ -72,20 +104,48 @@ jobs:
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
+      - name: Prepare Blaze build volume
+        if: runner.os == 'Linux'
+        run: bash scripts/setup-build-volume.sh
+      - name: Activate prebuilt Rust build tools
+        run: sh scripts/setup-blaze.sh --github-env
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: runner.os == 'Linux'
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: runner.os == 'Linux'
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          path: |
+            ${{ env.BLAZE_HOME }}
+            ${{ env.XDG_CACHE_HOME }}/blaze
+          key: blaze-btrfs-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-tools.json') }}-${{ github.job }}-${{ github.sha }}
+          restore-keys: |
+            blaze-btrfs-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-tools.json') }}-${{ github.job }}-
+      - uses: jdx/mr-boxington-action@88acf2bb50552c7c508cbac13e5f8c576b95b1de
+        with:
+          github-cache-mode: objects
+          cache-generation: blaze-0.20261105.4-mbx-1.30.0
       - run: node benchmarks/validate-results.mts
-      - run: mise run test
+      - name: Test with Cargo until Blaze #1876 is released
+        run: |
+          MBX_BLAZE=0 MBX_DISABLE=1 cargo test --lib --bins --tests -- --test-threads=1
+          MBX_BLAZE=0 MBX_DISABLE=1 cargo test --doc
+      - name: Show Blaze startup failure
+        if: failure()
+        run: cat "$BLAZE_HOME/v2/serve.log" 2>/dev/null || true
       # online jactionlint checks (impostor commits, known-vulnerable actions, ...) run in CI only
-      - run: mise run lint
+      - run: |
+          sudo prlimit --pid $$ --memlock=67108864:67108864
+          mise run lint
         env:
           JACTIONLINT_ONLINE: 1
           GITHUB_TOKEN: ${{ github.token }}
       - run: cargo-machete
       - run: mise x -- cargo-deny --locked check advisories bans licenses sources
-      - run: mise exec -- cargo msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
+      - run: mise exec -- env -u RUSTC -u RUSTUP_TOOLCHAIN MBX_BLAZE=0 cargo msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
       - run: mise run render
+        env:
+          MBX_BLAZE: "0"
+          MBX_DISABLE: "1"
       - name: assert render produces no diff
         run: |
           if [ -n "$(git status --porcelain)" ]; then
@@ -95,6 +155,13 @@ jobs:
             exit 1
           fi
       - run: mise run docs:build
+        env:
+          MBX_BLAZE: "0"
+          MBX_DISABLE: "1"
+      - name: Stop Blaze before caching its state
+        if: always()
+        run: |
+          if [ -x .blaze/bin/blaze ]; then .blaze/bin/blaze stop; fi
 
   # Guard the C ABI export set against the frozen crates/aube-ffi/abi-symbols.txt
   # manifest. Rust library crate APIs are not checked: major versions track the

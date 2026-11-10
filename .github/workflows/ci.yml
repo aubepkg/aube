@@ -8,12 +8,23 @@ on:
 
 permissions: {}
 
+# PR jobs can restore caches but cannot save them.
+cache-mode: read
+
 concurrency:
   group: ci-caller-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   ci:
+    if: github.event_name != 'push'
+    permissions:
+      contents: read
+    uses: $/.github/workflows/ci-impl.yml
+
+  ci-main:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    cache-mode: write
     permissions:
       contents: read
     uses: $/.github/workflows/ci-impl.yml
@@ -67,7 +78,7 @@ jobs:
     if: ${{ !cancelled() }}
     permissions:
       contents: read
-    needs: [ci, changes, ffi, node-addon]
+    needs: [ci, ci-main, changes, ffi, node-addon]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -78,4 +89,5 @@ jobs:
       - name: Check CI results
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          MAIN_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: .github/scripts/ci-final.py

@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/*"]
+exclude = ["patches/multiversion_no_op"]
 resolver = "3"
 
 [profile.release]
@@ -211,3 +212,8 @@ aube-util = { path = "crates/aube-util", version = "2.10.0" }
 
 [profile.dev]
 debug = 1
+
+[patch.crates-io]
+# Temporary: Blaze's no_std proc-macro glue fails (upstream #1780 / fix #1834).
+# Remove after a fixed Blaze release passes the compatibility probe.
+multiversion_no_op = { path = "patches/multiversion_no_op" }
