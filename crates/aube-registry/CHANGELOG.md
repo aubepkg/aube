@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.0](https://github.com/aubepkg/aube/compare/aube-registry-v2.9.0...aube-registry-v2.10.0) - 2026-11-09
+
+### Fixed
+
+- *(registry)* fall back to HTTP/1.1 for metadata after h2 too_many_data_frames ([#1912](https://github.com/aubepkg/aube/pull/1912))
+
 ## [2.9.0](https://github.com/aubepkg/aube/compare/aube-registry-v2.8.5...aube-registry-v2.9.0) - 2026-11-01
 
 ### Fixed

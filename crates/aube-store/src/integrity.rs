@@ -315,6 +315,14 @@ pub fn validate_pkg_content(
     let actual_version_without_build = actual_version_normalized
         .split_once('+')
         .map(|(base, _)| base);
+    // Some publishers ship zero-padded numeric components (e.g.
+    // `2024.04.13`) that the registry serves back as `2024.4.13`. npm
+    // and bun accept that, so compare with the padding stripped from
+    // the tarball side only.
+    let actual_version_unpadded = strip_leading_zeros(actual_version_normalized);
+    let actual_unpadded_without_build = actual_version_unpadded
+        .split_once('+')
+        .map(|(base, _)| base);
     // pnpm v9 lockfiles key git-hosted deps by the codeload tarball URL
     // (or a `git+<url>#<commit>` form) in the `version` slot of the
     // dep_path — that URL is what the resolver hands us as
@@ -328,7 +336,9 @@ pub fn validate_pkg_content(
         || expected_version.starts_with("file:");
     let version_matches = expected_is_url_or_ref
         || actual_version_normalized == expected_version
-        || actual_version_without_build == Some(expected_version);
+        || actual_version_without_build == Some(expected_version)
+        || actual_version_unpadded == expected_version
+        || actual_unpadded_without_build == Some(expected_version);
     if actual_name != expected_name || !version_matches {
         // Only carry the *actual* coordinate the tarball declared.
         // Every caller wraps the error with the expected
@@ -340,6 +350,33 @@ pub fn validate_pkg_content(
         });
     }
     Ok(())
+}
+
+/// Strip leading zeros from the numeric `major.minor.patch` core of a
+/// version (`2024.04.13` -> `2024.4.13`), leaving any prerelease or
+/// build suffix untouched. Anything whose core isn't exactly three
+/// non-empty all-digit components is returned unchanged, so malformed
+/// or non-semver strings still need an exact match.
+fn strip_leading_zeros(version: &str) -> String {
+    let split = version.find(['-', '+']).unwrap_or(version.len());
+    let (core, rest) = version.split_at(split);
+    let parts: Vec<&str> = core.splitn(4, '.').collect();
+    let well_formed = parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    if !well_formed {
+        return version.to_string();
+    }
+    let core = parts
+        .iter()
+        .map(|p| match p.trim_start_matches('0') {
+            "" => "0",
+            trimmed => trimmed,
+        })
+        .collect::<Vec<_>>()
+        .join(".");
+    format!("{core}{rest}")
 }
 
 /// Decode a pnpm-style SRI integrity string (`sha512-` / `sha384-` /

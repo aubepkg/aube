@@ -6586,6 +6586,30 @@ fn pick_version_for_add_gated_latest_survives_missing_dist_tag() {
     assert_eq!(result.version, "1.0.0");
 }
 
+#[test]
+fn pick_version_for_add_gated_latest_follows_mature_prerelease_tag() {
+    let packument = make_timed_packument("cf", &["0.15.0", "1.0.0-beta.28"], &[], "1.0.0-beta.28");
+    let gate = mra(1440, false, &[]);
+    let result = pick_version_for_add(&packument, "cf", "latest", Some(&gate)).unwrap();
+    assert_eq!(result.version, "1.0.0-beta.28");
+}
+
+#[test]
+fn pick_version_for_add_gated_latest_skips_fresh_prerelease_tag() {
+    let packument = make_timed_packument("cf", &["0.15.0"], &["1.0.0-beta.28"], "1.0.0-beta.28");
+    let gate = mra(1440, false, &[]);
+    let result = pick_version_for_add(&packument, "cf", "latest", Some(&gate)).unwrap();
+    assert_eq!(result.version, "0.15.0");
+}
+
+#[test]
+fn pick_version_for_add_gated_latest_excluded_package_takes_fresh_prerelease_tag() {
+    let packument = make_timed_packument("cf", &["0.15.0"], &["1.0.0-beta.28"], "1.0.0-beta.28");
+    let gate = mra(1440, false, &["cf"]);
+    let result = pick_version_for_add(&packument, "cf", "latest", Some(&gate)).unwrap();
+    assert_eq!(result.version, "1.0.0-beta.28");
+}
+
 fn assert_protocol_hijack_blocked(spec: &str) {
     let mut packument = make_packument("@victim/utils", &["1.0.0"], "1.0.0");
     packument
