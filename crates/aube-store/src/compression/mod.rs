@@ -1,34 +1,17 @@
 // Platform backend and napi hybrid parsing code adapted from SocketDev/decmpfs v0.1.5.
 // MIT-licensed; retained attribution and license are in compression/LICENSE.
 // Aube-owned integration uses workspace zstd and local install/store contracts.
-//! Aube-owned OS-compression backends for its opt-in native-addon CAS path. The
-//! kernel transparently decompresses the stored bytes on reads.
+//! Transparent filesystem compression for opt-in native-addon storage.
 //!
-//! `compress_file(path)` detects the filesystem, applies compression, then verifies the
-//! kernel reads the bytes back identically — rolling back on any failure. `probe(path)`
-//! is the detect-only / capability-reporting half.
-//!
-//! Backends: btrfs (`FS_COMPR_FL` + the `btrfs.compression` property), NTFS
-//! (`FSCTL_SET_COMPRESSION`), and the macOS APFS resource fork; other targets
-//! use the plain-write fallback.
-//!
-//! Contract: every `Outcome` is a SUCCESS; `Err` is reserved for genuine I/O failures
-//! that leave the file's integrity unknown. An unsupported FS, a permission/lock issue,
-//! an incompressible or too-large file are non-fatal `Outcome`s.
-//!
-//! Panic-free invariant: the deny below keeps non-test code free of the obvious panic
-//! sources; all slice indexing is length-guarded.
+//! APFS, btrfs, and NTFS backends verify that reads reproduce the input and
+//! restore plain bytes on failure. Unsupported filesystems and inputs that
+//! cannot shrink fall back to plain storage. `Outcome` describes these normal
+//! cases; `Err` reports I/O failures that could leave file integrity unknown.
 
-// Keep the source backend routines together so their safety and platform tests
-// remain auditable. Aube currently calls only the gate, hybrid decoder, and
-// one-pass writer; this module is private to aube-store.
+// The store uses the gate, hybrid decoder, and one-pass writer.
+// Retain the private backend helpers for safety and platform tests.
 #![allow(dead_code, unused_imports)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
-// On a nightly `cargo llvm-cov` run, cargo-llvm-cov sets `coverage_nightly`,
-// enabling `#[coverage(off)]` so test-only code is dropped from the report and it
-// reflects PRODUCTION coverage. A no-op on stable (the cfg is unset), so ordinary
-// builds and `cargo test` are unaffected.
-
 use std::path::Path;
 
 /// What happened to the file. Only `Err` is a hard failure.
@@ -349,111 +332,6 @@ fn copy_file_with<B: Backend>(backend: &B, src: &Path, dest: &Path) -> Result<Co
     })
 }
 
-/// True when both paths name the same underlying file — same dev+inode on
-/// unix, or same volume serial + file index on Windows. Guards [`copy_file`]'s
-/// replace-by-default from removing its own source.
-#[cfg(unix)]
-fn is_same_file(a: &Path, b: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    match (std::fs::metadata(a), std::fs::metadata(b)) {
-        (Ok(meta_a), Ok(meta_b)) => meta_a.dev() == meta_b.dev() && meta_a.ino() == meta_b.ino(),
-        _ => false,
-    }
-}
-
-#[cfg(windows)]
-fn is_same_file(a: &Path, b: &Path) -> bool {
-    use std::os::windows::io::AsRawHandle;
-
-    use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
-    };
-
-    fn identity(path: &Path) -> Option<(u32, u64)> {
-        let file = std::fs::File::open(path).ok()?;
-        let mut info = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
-        if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
-            return None;
-        }
-        Some((
-            info.dwVolumeSerialNumber,
-            (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
-        ))
-    }
-
-    match (identity(a), identity(b)) {
-        (Some(id_a), Some(id_b)) => id_a == id_b,
-        // Preserve the exact-path fast path if a file-information query is denied.
-        _ => match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-            (Ok(canon_a), Ok(canon_b)) => canon_a == canon_b,
-            _ => false,
-        },
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn is_same_file(a: &Path, b: &Path) -> bool {
-    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        (Ok(canon_a), Ok(canon_b)) => canon_a == canon_b,
-        _ => false,
-    }
-}
-
-/// Fail-soft plain atomic write: sibling temp + fsync + rename. The never-break-the
-/// -install floor under every `compress_bytes` fallback.
-fn plain_write(path: &Path, content: &[u8]) -> Result<(), Error> {
-    use std::io::Write;
-    let dir = path.parent().ok_or_else(|| Error::Io {
-        context: "no parent dir",
-        source: std::io::Error::from(std::io::ErrorKind::InvalidInput),
-    })?;
-    let mut temp = tempfile::Builder::new()
-        .prefix(".aube-plain-")
-        .tempfile_in(dir)
-        .map_err(|source| Error::Io {
-            context: "plain write temp",
-            source,
-        })?;
-    temp.write_all(content)
-        .and_then(|()| {
-            // Keep incomplete bytes private; publish the completed CAS file
-            // with the same permissions as the ordinary store writer.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                temp.as_file()
-                    .set_permissions(std::fs::Permissions::from_mode(0o644))?;
-            }
-            temp.as_file().sync_all()
-        })
-        .map_err(|source| Error::Io {
-            context: "plain write temp",
-            source,
-        })?;
-    // Close our handle before replacement; Windows can temporarily deny a
-    // rename while another writer or reader still holds the destination open.
-    let temp = temp.into_temp_path();
-    for attempt in 0..5 {
-        match std::fs::rename(&temp, path) {
-            Ok(()) => return Ok(()),
-            Err(source)
-                if cfg!(windows)
-                    && matches!(source.raw_os_error(), Some(5 | 32 | 33))
-                    && attempt < 4 =>
-            {
-                std::thread::sleep(std::time::Duration::from_millis(20 << attempt));
-            }
-            Err(source) => {
-                return Err(Error::Io {
-                    context: "plain write rename",
-                    source,
-                });
-            }
-        }
-    }
-    unreachable!("the last rename attempt always returns")
-}
-
 /// Filesystem-compression state of a path — one call that coalesces the
 /// otherwise-separate size + backend-signal reads (the compress/copy paths
 /// previously did a `stat` AND an `lstat`/attr read per file). Follows symlinks:
@@ -507,7 +385,9 @@ fn stat_with<B: Backend>(backend: &B, path: &Path) -> Result<Stat, Error> {
 }
 
 pub mod addon;
+mod file;
 mod gate;
+use file::{is_same_file, plain_write};
 mod safety;
 mod verify;
 
