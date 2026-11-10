@@ -152,21 +152,21 @@ fn decode_zstd_payload_with_bulk_limit(
 }
 
 fn read_u64_le(buf: &[u8], at: usize) -> Option<u64> {
-    let bytes = buf.get(at..at + 8)?;
+    let bytes = buf.get(at..at.checked_add(8)?)?;
     let mut arr = [0u8; 8];
     arr.copy_from_slice(bytes);
     Some(u64::from_le_bytes(arr))
 }
 
 fn read_u32_le(buf: &[u8], at: usize) -> Option<u32> {
-    let bytes = buf.get(at..at + 4)?;
+    let bytes = buf.get(at..at.checked_add(4)?)?;
     let mut arr = [0u8; 4];
     arr.copy_from_slice(bytes);
     Some(u32::from_le_bytes(arr))
 }
 
 fn read_u16_le(buf: &[u8], at: usize) -> Option<u16> {
-    let bytes = buf.get(at..at + 2)?;
+    let bytes = buf.get(at..at.checked_add(2)?)?;
     Some(u16::from_le_bytes([bytes[0], bytes[1]]))
 }
 
@@ -191,26 +191,26 @@ fn find_macho(content: &[u8]) -> Option<&[u8]> {
     let mut cmd_off = 32usize; // sizeof(mach_header_64)
     for _ in 0..ncmds.min(10_000) {
         let cmd = read_u32_le(content, cmd_off)?;
-        let cmdsize = read_u32_le(content, cmd_off + 4)? as usize;
+        let cmdsize = read_u32_le(content, cmd_off.checked_add(4)?)? as usize;
         if cmdsize == 0 {
             return None;
         }
         if cmd == LC_SEGMENT_64 {
             // segment_command_64: cmd(4) cmdsize(4) segname(16) vmaddr(8) vmsize(8)
             //   fileoff(8) filesize(8) maxprot(4) initprot(4) nsects(4) flags(4)
-            let segname = content.get(cmd_off + 8..cmd_off + 24)?;
+            let segname = content.get(cmd_off.checked_add(8)?..cmd_off.checked_add(24)?)?;
             if name_eq(segname, b"SMOL") {
-                let nsects = read_u32_le(content, cmd_off + 64)?;
-                let mut sect_off = cmd_off + 72; // start of section_64 array
+                let nsects = read_u32_le(content, cmd_off.checked_add(64)?)?;
+                let mut sect_off = cmd_off.checked_add(72)?; // start of section_64 array
                 for _ in 0..nsects.min(1000) {
                     // section_64: sectname(16) segname(16) addr(8) size(8) offset(4) ...
-                    let sectname = content.get(sect_off..sect_off + 16)?;
+                    let sectname = content.get(sect_off..sect_off.checked_add(16)?)?;
                     if name_eq(sectname, b"__PRESSED_DATA") {
-                        let size = read_u64_le(content, sect_off + 40)? as usize;
-                        let offset = read_u32_le(content, sect_off + 48)? as usize;
+                        let size = read_u64_le(content, sect_off.checked_add(40)?)? as usize;
+                        let offset = read_u32_le(content, sect_off.checked_add(48)?)? as usize;
                         return content.get(offset..offset.checked_add(size)?);
                     }
-                    sect_off += 80; // sizeof(section_64)
+                    sect_off = sect_off.checked_add(80)?; // sizeof(section_64)
                 }
             }
         }
@@ -235,16 +235,16 @@ fn find_elf(content: &[u8]) -> Option<&[u8]> {
     }
     // String table section header → its (offset,size).
     let strtab_hdr = e_shoff.checked_add(e_shstrndx.checked_mul(e_shentsize)?)?;
-    let strtab_off = read_u64_le(content, strtab_hdr + 24)? as usize;
-    let strtab_size = read_u64_le(content, strtab_hdr + 32)? as usize;
+    let strtab_off = read_u64_le(content, strtab_hdr.checked_add(24)?)? as usize;
+    let strtab_size = read_u64_le(content, strtab_hdr.checked_add(32)?)? as usize;
     let strtab = content.get(strtab_off..strtab_off.checked_add(strtab_size)?)?;
 
     for i in 0..e_shnum {
         let shdr = e_shoff.checked_add(i.checked_mul(e_shentsize)?)?;
         let sh_name = read_u32_le(content, shdr)? as usize;
         if cstr_at(strtab, sh_name) == Some(b".PRESSED_DATA".as_slice()) {
-            let sh_offset = read_u64_le(content, shdr + 24)? as usize;
-            let sh_size = read_u64_le(content, shdr + 32)? as usize;
+            let sh_offset = read_u64_le(content, shdr.checked_add(24)?)? as usize;
+            let sh_size = read_u64_le(content, shdr.checked_add(32)?)? as usize;
             return content.get(sh_offset..sh_offset.checked_add(sh_size)?);
         }
     }
@@ -255,24 +255,24 @@ fn find_elf(content: &[u8]) -> Option<&[u8]> {
 /// `.PRESSED_DATA`) and return (PointerToRawData, SizeOfRawData).
 fn find_pe(content: &[u8]) -> Option<&[u8]> {
     let pe_off = read_u32_le(content, 0x3c)? as usize;
-    if content.get(pe_off..pe_off + 4)? != b"PE\0\0" {
+    if content.get(pe_off..pe_off.checked_add(4)?)? != b"PE\0\0" {
         return None;
     }
-    let coff = pe_off + 4;
-    let number_of_sections = read_u16_le(content, coff + 2)? as usize;
-    let size_of_optional = read_u16_le(content, coff + 16)? as usize;
+    let coff = pe_off.checked_add(4)?;
+    let number_of_sections = read_u16_le(content, coff.checked_add(2)?)? as usize;
+    let size_of_optional = read_u16_le(content, coff.checked_add(16)?)? as usize;
     if number_of_sections > 200 {
         return None;
     }
-    let mut sect = coff + 20 + size_of_optional; // section table start
+    let mut sect = coff.checked_add(20)?.checked_add(size_of_optional)?; // section table start
     for _ in 0..number_of_sections {
-        let name = content.get(sect..sect + 8)?;
+        let name = content.get(sect..sect.checked_add(8)?)?;
         if name == b".PRESSED" {
-            let size_of_raw = read_u32_le(content, sect + 16)? as usize;
-            let ptr_raw = read_u32_le(content, sect + 20)? as usize;
+            let size_of_raw = read_u32_le(content, sect.checked_add(16)?)? as usize;
+            let ptr_raw = read_u32_le(content, sect.checked_add(20)?)? as usize;
             return content.get(ptr_raw..ptr_raw.checked_add(size_of_raw)?);
         }
-        sect += 40; // sizeof(IMAGE_SECTION_HEADER)
+        sect = sect.checked_add(40)?; // sizeof(IMAGE_SECTION_HEADER)
     }
     None
 }
@@ -294,6 +294,19 @@ fn cstr_at(strtab: &[u8], off: usize) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod decode_tests {
+    #[test]
+    fn malformed_offsets_return_none_without_panicking() {
+        assert!(super::read_u64_le(&[], usize::MAX).is_none());
+        assert!(super::read_u32_le(&[], usize::MAX).is_none());
+        assert!(super::read_u16_le(&[], usize::MAX).is_none());
+        let mut elf = vec![0; 64];
+        elf[..5].copy_from_slice(b"\x7fELF\x02");
+        elf[40..48].copy_from_slice(&(usize::MAX as u64 - 8).to_le_bytes());
+        elf[58..60].copy_from_slice(&64u16.to_le_bytes());
+        elf[60..62].copy_from_slice(&1u16.to_le_bytes());
+        assert!(super::find_elf(&elf).is_none());
+    }
+
     use super::{decode_zstd_payload, decode_zstd_payload_with_bulk_limit};
 
     fn frame(raw: &[u8]) -> Vec<u8> {

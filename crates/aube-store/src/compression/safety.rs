@@ -184,26 +184,129 @@ fn verify_readback_or_restore<B: Backend>(
 /// MUST surface that as a hard error rather than a benign `Skipped`, else a
 /// corrupted file is left on disk while the outcome reads as non-fatal.
 fn restore(path: &Path, bytes: &[u8]) -> Result<(), Error> {
-    use std::io::Write;
-    let dir = path.parent().ok_or_else(|| Error::Io {
-        context: "rollback restore: path has no parent",
-        source: std::io::Error::from(std::io::ErrorKind::InvalidInput),
-    })?;
-    let tmp = dir.join(format!(
-        ".aube-fscompress-restore-{}.tmp",
-        std::process::id()
-    ));
-    let wrote = std::fs::File::create(&tmp)
-        .and_then(|mut file| {
-            file.write_all(bytes)?;
-            file.sync_all()
-        })
-        .and_then(|()| std::fs::rename(&tmp, path));
-    wrote.map_err(|source| {
-        let _ = std::fs::remove_file(&tmp);
-        Error::Io {
+    super::plain_write(path, bytes).map_err(|error| match error {
+        Error::Io { source, .. } => Error::Io {
             context: "rollback restore",
             source,
-        }
+        },
+        other => other,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compression::{Gate, Support, compress_bytes_with};
+
+    struct BrokenBackend {
+        fail: bool,
+    }
+    impl Backend for BrokenBackend {
+        fn detect(&self, _: &Path) -> Result<Support, Error> {
+            Ok(Support::Supported)
+        }
+        fn is_already_compressed(&self, _: &Path) -> Result<bool, Error> {
+            Ok(false)
+        }
+        fn apply_inplace(&self, path: &Path, bytes: &[u8]) -> Result<(), Error> {
+            self.apply_bytes(path, bytes, None)
+        }
+        fn apply_bytes(
+            &self,
+            path: &Path,
+            _: &[u8],
+            _: Option<std::fs::Permissions>,
+        ) -> Result<(), Error> {
+            if self.fail {
+                return Err(Error::Io {
+                    context: "injected failure",
+                    source: std::io::Error::other("write failed"),
+                });
+            }
+            std::fs::write(path, b"corrupt output").unwrap();
+            Ok(())
+        }
+        fn compressed_on_disk(&self, _: &Path) -> Result<Option<bool>, Error> {
+            Ok(Some(true))
+        }
+    }
+
+    #[test]
+    fn failed_backend_write_falls_back_to_original_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("addon.node");
+        let result = compress_bytes_with(
+            &BrokenBackend { fail: true },
+            &path,
+            b"original",
+            &Gate::any(),
+        )
+        .unwrap();
+        assert!(matches!(result, Outcome::Skipped { .. }));
+        assert_eq!(std::fs::read(path).unwrap(), b"original");
+    }
+
+    #[test]
+    fn corrupt_readback_restores_original_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("addon.node");
+        let result =
+            compress_bytes_guarded(&BrokenBackend { fail: false }, &path, b"original").unwrap();
+        assert!(matches!(
+            result,
+            Outcome::Skipped {
+                reason: SkipReason::IntegrityRevert
+            }
+        ));
+        assert_eq!(std::fs::read(path).unwrap(), b"original");
+    }
+
+    #[test]
+    fn rollback_failure_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(restore(dir.path(), b"cannot replace a directory").is_err());
+    }
+
+    #[test]
+    fn concurrent_restores_and_plain_writes_do_not_share_temporary_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("shared.node");
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for i in 0..8 {
+                let path = dir.path().join(format!("{i}.node"));
+                let shared = &shared;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let bytes = vec![i as u8; 128 * 1024];
+                    barrier.wait();
+                    for _ in 0..8 {
+                        restore(&path, &bytes).unwrap();
+                        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+                        super::super::plain_write(shared, &bytes).unwrap();
+                        let observed = std::fs::read(shared).unwrap();
+                        assert_eq!(observed.len(), bytes.len());
+                        assert!(observed.iter().all(|b| *b == observed[0]));
+                    }
+                });
+            }
+        });
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 9);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn apfs_compressible_input_remains_compressed() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = crate::compression::Os;
+        if !matches!(backend.detect(dir.path()).unwrap(), Support::Supported) {
+            return;
+        }
+        let path = dir.path().join("addon.node");
+        let bytes = vec![b'A'; 1024 * 1024];
+        let outcome = compress_bytes_guarded(&backend, &path, &bytes).unwrap();
+        assert!(matches!(outcome, Outcome::Compressed { .. }), "{outcome:?}");
+        assert!(backend.is_already_compressed(&path).unwrap());
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
 }

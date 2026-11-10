@@ -407,30 +407,24 @@ fn plain_write(path: &Path, content: &[u8]) -> Result<(), Error> {
         context: "no parent dir",
         source: std::io::Error::from(std::io::ErrorKind::InvalidInput),
     })?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "addon".to_string());
-    let tmp = dir.join(format!(".{name}.plain-{}.tmp", std::process::id()));
-    let res = (|| -> std::io::Result<()> {
-        let mut file = std::fs::File::create(&tmp)?;
-        file.write_all(content)?;
-        file.sync_all()
-    })();
-    if let Err(source) = res {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(Error::Io {
+    let mut temp = tempfile::Builder::new()
+        .prefix(".aube-plain-")
+        .tempfile_in(dir)
+        .map_err(|source| Error::Io {
             context: "plain write temp",
             source,
-        });
-    }
-    std::fs::rename(&tmp, path).map_err(|source| {
-        let _ = std::fs::remove_file(&tmp);
-        Error::Io {
-            context: "plain write rename",
+        })?;
+    temp.write_all(content)
+        .and_then(|()| temp.as_file().sync_all())
+        .map_err(|source| Error::Io {
+            context: "plain write temp",
             source,
-        }
-    })
+        })?;
+    temp.persist(path).map_err(|error| Error::Io {
+        context: "plain write rename",
+        source: error.error,
+    })?;
+    Ok(())
 }
 
 /// Filesystem-compression state of a path — one call that coalesces the
