@@ -437,7 +437,7 @@ pub(crate) fn build_bin_command(
             cmd.args(args);
             cmd
         };
-    let path_dirs = crate::runtime::path_entries_with_project_bins(project_bin_dirs(cwd));
+    let path_dirs = crate::runtime::user_command_path_entries(project_bin_dirs(cwd));
     command.env("PATH", aube_scripts::prepend_paths(&path_dirs));
     crate::runtime::apply_child_env(&mut command);
     command

@@ -473,3 +473,23 @@ SH
 	assert_success
 	assert_output --partial "v0.99.1"
 }
+
+@test "activated tool shim precedes a selected runtime's npm for exec" {
+	_skip_on_windows "uses a POSIX shell bin"
+	_basic_project
+	_fab_node "$(_aube_runtime_dir)" "0.99.1"
+	printf '#!/bin/sh\n' >"$(_aube_runtime_dir)/0.99.1/bin/npm"
+	chmod +x "$(_aube_runtime_dir)/0.99.1/bin/npm"
+	echo "0.99" >.nvmrc
+	run aube install
+	assert_success
+	mkdir -p shims node_modules/.bin
+	printf '#!/bin/sh\n' >shims/npm
+	chmod +x shims/npm
+	printf '#!/bin/sh\ncommand -v npm\n' >node_modules/.bin/whichnpm
+	chmod +x node_modules/.bin/whichnpm
+	export AUBE_SHIM_DIR="$PWD/shims"
+	run aube exec whichnpm
+	assert_success
+	assert_output "$PWD/shims/npm"
+}

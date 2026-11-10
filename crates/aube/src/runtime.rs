@@ -536,18 +536,39 @@ pub(crate) fn node_child_path_entries() -> Vec<PathBuf> {
     entries
 }
 
-/// Place the active runtime PATH entry around project-local `.bin`
-/// directories. Wrappers lead so a local `node` cannot bypass the shim;
-/// selectors follow so package-provided commands retain normal precedence.
-pub fn path_entries_with_project_bins(project_bins: Vec<PathBuf>) -> Vec<PathBuf> {
+/// PATH entries for user commands (scripts, `exec`, `dlx`, `run <bin>`):
+/// project bins around the active runtime bin dir, plus the activated tool
+/// shim dir. Wrappers lead so a local `node` cannot bypass their shim;
+/// selectors follow so package-provided commands keep normal precedence.
+/// Startup strips that dir from aube's own `PATH`, so it is restored here.
+/// It sits ahead of an aube-selected runtime's bin dir, which ships a real
+/// `npm`, but behind project bins and wrapper runtimes. A host-supplied
+/// selector keeps its bin dir first: the shim dir also holds `node`, which
+/// would re-resolve the project pin instead of the host's chosen Node.
+pub fn user_command_path_entries(project_bins: Vec<PathBuf>) -> Vec<PathBuf> {
+    let shim_dir = crate::tool_shims::activated_shim_dir();
     let Some(context) = current() else {
-        return project_bins;
+        let mut entries = project_bins;
+        entries.extend(shim_dir);
+        return entries;
     };
-    aube_scripts::order_path_entries(
-        project_bins,
-        context.bin_dir.as_deref(),
-        context.bin_dir_precedes_project_bins,
-    )
+    let mut entries = project_bins;
+    match context.bin_dir.as_deref() {
+        Some(runtime) if context.bin_dir_precedes_project_bins => {
+            entries.insert(0, runtime.to_path_buf());
+            entries.extend(shim_dir);
+        }
+        Some(runtime) if context.provenance == RuntimeProvenance::Embedder => {
+            entries.push(runtime.to_path_buf());
+            entries.extend(shim_dir);
+        }
+        Some(runtime) => {
+            entries.extend(shim_dir);
+            entries.push(runtime.to_path_buf());
+        }
+        None => entries.extend(shim_dir),
+    }
+    entries
 }
 
 /// The binary to probe for a node version when one wasn't supplied: the
@@ -1547,14 +1568,14 @@ mod tests {
 
         let wrapper_entries =
             with_embedder_runtime(Some(EmbedderRuntime::wrapper("/shim/node")), async {
-                path_entries_with_project_bins(vec![project_bin.clone()])
+                user_command_path_entries(vec![project_bin.clone()])
             })
             .await;
         assert_eq!(wrapper_entries, vec![abs("/shim"), project_bin.clone()]);
 
         let selector_entries =
             with_embedder_runtime(Some(EmbedderRuntime::selector("/opt/node/bin")), async {
-                path_entries_with_project_bins(vec![project_bin.clone()])
+                user_command_path_entries(vec![project_bin.clone()])
             })
             .await;
         assert_eq!(selector_entries, vec![project_bin, abs("/opt/node/bin")]);
