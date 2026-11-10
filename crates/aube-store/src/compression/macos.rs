@@ -617,15 +617,18 @@ fn apply_bytes_with_streaming_threshold(
                 source,
             })?;
         }
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(mode.unwrap_or_else(|| std::fs::Permissions::from_mode(0o644)))
+            .map_err(|source| Error::Io {
+                context: "set completed file permissions",
+                source,
+            })?;
         Ok(())
     })();
 
     if let Err(e) = build {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
-    }
-    if let Some(perm) = mode {
-        let _ = std::fs::set_permissions(&tmp, perm);
     }
     // Preserve ownership across the rewrite. Running as root (a global npm install,
     // a Docker build) the temp is created owned by the current euid, so the rename

@@ -320,6 +320,23 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn apfs_compressible_input_remains_compressed() {
+        use std::os::unix::fs::PermissionsExt;
+        // Change umask only in an isolated test process, never in the test suite.
+        if std::env::var_os("AUBE_TEST_RESTRICTIVE_UMASK").is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "compression::safety::tests::apfs_compressible_input_remains_compressed",
+                ])
+                .env("AUBE_TEST_RESTRICTIVE_UMASK", "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        unsafe {
+            libc::umask(0o077);
+        }
         let dir = tempfile::tempdir().unwrap();
         let backend = crate::compression::Os;
         if !matches!(backend.detect(dir.path()).unwrap(), Support::Supported) {
@@ -330,6 +347,10 @@ mod tests {
         let outcome = compress_bytes_guarded(&backend, &path, &bytes).unwrap();
         assert!(matches!(outcome, Outcome::Compressed { .. }), "{outcome:?}");
         assert!(backend.is_already_compressed(&path).unwrap());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
         assert_eq!(std::fs::read(path).unwrap(), bytes);
     }
 }

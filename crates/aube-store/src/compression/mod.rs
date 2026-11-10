@@ -430,11 +430,28 @@ fn plain_write(path: &Path, content: &[u8]) -> Result<(), Error> {
             context: "plain write temp",
             source,
         })?;
-    temp.persist(path).map_err(|error| Error::Io {
-        context: "plain write rename",
-        source: error.error,
-    })?;
-    Ok(())
+    // Close our handle before replacement; Windows can temporarily deny a
+    // rename while another writer or reader still holds the destination open.
+    let temp = temp.into_temp_path();
+    for attempt in 0..5 {
+        match std::fs::rename(&temp, path) {
+            Ok(()) => return Ok(()),
+            Err(source)
+                if cfg!(windows)
+                    && matches!(source.raw_os_error(), Some(5 | 32 | 33))
+                    && attempt < 4 =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(20 << attempt));
+            }
+            Err(source) => {
+                return Err(Error::Io {
+                    context: "plain write rename",
+                    source,
+                });
+            }
+        }
+    }
+    unreachable!("the last rename attempt always returns")
 }
 
 /// Filesystem-compression state of a path — one call that coalesces the

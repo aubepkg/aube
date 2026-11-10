@@ -311,6 +311,12 @@ pub(crate) fn apply_bytes(
             context: "write temp",
             source,
         })?;
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(mode.unwrap_or_else(|| std::fs::Permissions::from_mode(0o644)))
+            .map_err(|source| Error::Io {
+                context: "set completed file permissions",
+                source,
+            })?;
         file.sync_all().map_err(|source| Error::Io {
             context: "fsync temp",
             source,
@@ -319,9 +325,6 @@ pub(crate) fn apply_bytes(
     })();
 
     if result.is_ok() {
-        if let Some(perm) = mode {
-            let _ = std::fs::set_permissions(&tmp, perm);
-        }
         // Preserve ownership across the rewrite. As root (a global npm install, a
         // Docker build) the temp is owned by the current euid, so the rename would
         // otherwise change the file's owner. Match the original's uid/gid.
