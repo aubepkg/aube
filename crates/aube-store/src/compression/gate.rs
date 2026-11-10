@@ -180,15 +180,15 @@ impl Gate {
     /// predicate (if set). The name is matched against the full path the caller
     /// passes — pass a `/`-normalized path so `**` segments line up.
     pub fn matches(&self, name: &str, len: u64) -> bool {
-        if let Some(glob) = &self.glob {
-            if !glob_match(glob, name) {
-                return false;
-            }
+        if let Some(glob) = &self.glob
+            && !glob_match(glob, name)
+        {
+            return false;
         }
-        if let Some(size) = &self.size {
-            if !size.matches(len) {
-                return false;
-            }
+        if let Some(size) = &self.size
+            && !size.matches(len)
+        {
+            return false;
         }
         true
     }

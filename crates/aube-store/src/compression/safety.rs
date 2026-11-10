@@ -35,10 +35,10 @@ pub(crate) fn apply_guarded<B: Backend>(backend: &B, path: &Path) -> Result<Outc
     // INV-fail-soft: EACCES/EPERM/EROFS -> Skipped(PermissionDenied); EBUSY/ETXTBSY
     // -> Skipped(Busy). A genuine, unclassifiable I/O error still propagates.
     if let Err(err) = backend.apply_inplace(path, &snapshot) {
-        if let Error::Io { source, .. } = &err {
-            if let Some(reason) = classify_skip(source) {
-                return Ok(Outcome::Skipped { reason });
-            }
+        if let Error::Io { source, .. } = &err
+            && let Some(reason) = classify_skip(source)
+        {
+            return Ok(Outcome::Skipped { reason });
         }
         return Err(err);
     }
@@ -139,10 +139,10 @@ pub(crate) fn compress_bytes_guarded<B: Backend>(
     content: &[u8],
 ) -> Result<Outcome, Error> {
     if let Err(err) = backend.apply_bytes(path, content, None) {
-        if let Error::Io { source, .. } = &err {
-            if let Some(reason) = classify_skip(source) {
-                return Ok(Outcome::Skipped { reason });
-            }
+        if let Error::Io { source, .. } = &err
+            && let Some(reason) = classify_skip(source)
+        {
+            return Ok(Outcome::Skipped { reason });
         }
         return Err(err);
     }

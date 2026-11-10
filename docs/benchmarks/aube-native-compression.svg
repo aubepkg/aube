@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1190" viewBox="0 0 1600 1190" role="img" aria-labelledby="title desc">
   <title id="title">Aube native addon compression results</title>
-  <desc id="desc">On three macOS ARM64 native addons, the Aube LZFSE-first path used less APFS storage, completed compression and verification faster, and reduced peak process memory. Native load time stayed within half a millisecond.</desc>
+  <desc id="desc">On three macOS ARM64 native addons, the Aube LZFSE-first path used less APFS storage, completed compression and verification faster, and reduced peak process memory. Node process elapsed time stayed within half a millisecond.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0a1020"/>
@@ -78,8 +78,8 @@
 
   <!-- Native load -->
   <g filter="url(#shadow)"><rect x="820" y="590" width="710" height="350" rx="18" class="card"/></g>
-  <text x="850" y="630" class="cardtitle">Native module load</text>
-  <text x="850" y="653" class="cardunit">Fresh Node process · median `require()` time · ms</text>
+  <text x="850" y="630" class="cardtitle">Node process with addon</text>
+  <text x="850" y="653" class="cardunit">Startup + require() + process exit · median ms</text>
   <rect x="1315" y="615" width="12" height="12" rx="3" class="old"/><text x="1334" y="626" class="legend">LZVN first</text>
   <rect x="1420" y="615" width="12" height="12" rx="3" class="new"/><text x="1439" y="626" class="legend">LZFSE first</text>
   <line x1="1000" y1="680" x2="1000" y2="890" class="grid"/><line x1="1100" y1="680" x2="1100" y2="890" class="grid"/><line x1="1200" y1="680" x2="1200" y2="890" class="grid"/><line x1="1300" y1="680" x2="1300" y2="890" class="grid"/><line x1="1400" y1="680" x2="1400" y2="890" class="grid"/>
@@ -92,5 +92,5 @@
   <text x="98" y="1008" class="calloutHead">Zstd hybrid decoder: 14–17% faster</text>
   <text x="98" y="1038" class="calloutText">Bounded bulk decoding for small napi frames reduced decode time on the same addon inputs. Peak decoder RSS was effectively unchanged; no memory saving is claimed for this path.</text>
   <text x="70" y="1102" class="foot">LZFSE vs LZVN. Fresh APFS files, actual allocated blocks, and full Aube `compress_bytes` readback verification. Values are release-profile medians from 3 fresh-process runs.</text>
-  <text x="70" y="1125" class="foot">Native load: 9 paired Node launches per run, repeated 3 times; LZFSE changed these medians by −0.4 to +0.5 ms. zstd comparison used level-3 frames made from the same addon files.</text>
+  <text x="70" y="1125" class="foot">Process elapsed time: 9 paired Node launches per run, repeated 3 times; LZFSE changed these medians by −0.4 to +0.5 ms. zstd comparison used level-3 frames made from the same addon files.</text>
 </svg>

@@ -188,6 +188,23 @@ fn resource_fork_table_len(num_blocks: usize) -> Result<usize, Error> {
 /// `offset[0]` = table size; `offset[i+1]` = end of block i; last = total size.
 /// `Ok(None)` means this codec did not shrink the input.
 fn build_resource_fork_with_codec(raw: &[u8], codec: Codec) -> Result<Option<Vec<u8>>, Error> {
+    let workers = if std::env::var_os("DECMPFS_SERIAL").is_some() {
+        1
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(raw.len().div_ceil(BLOCK).max(1))
+    };
+    build_resource_fork_with_workers(raw, codec, workers, compress_block_with_codec)
+}
+
+fn build_resource_fork_with_workers(
+    raw: &[u8],
+    codec: Codec,
+    workers: usize,
+    encode: impl Fn(&[u8], &mut [u8], Codec) -> Option<Vec<u8>> + Sync,
+) -> Result<Option<Vec<u8>>, Error> {
     if raw.is_empty() {
         return Ok(None);
     }
@@ -211,14 +228,6 @@ fn build_resource_fork_with_codec(raw: &[u8], codec: Codec) -> Result<Option<Vec
     offsets.push(u32::try_from(table_len).map_err(|_| resource_fork_too_large())?);
 
     let scratch_len = unsafe { compression_encode_scratch_buffer_size(codec.algorithm()) };
-    let workers = if std::env::var_os("DECMPFS_SERIAL").is_some() {
-        1
-    } else {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .min(num_blocks)
-    };
     let append_block = |out: &mut Vec<u8>, offsets: &mut Vec<u32>, block: Vec<u8>| {
         let Some(next_offset) = out.len().checked_add(block.len()) else {
             return false;
@@ -235,7 +244,7 @@ fn build_resource_fork_with_codec(raw: &[u8], codec: Codec) -> Result<Option<Vec
         let mut scratch = vec![0u8; scratch_len];
         let mut won = true;
         for chunk in raw.chunks(BLOCK) {
-            let Some(block) = compress_block_with_codec(chunk, &mut scratch, codec) else {
+            let Some(block) = encode(chunk, &mut scratch, codec) else {
                 won = false;
                 break;
             };
@@ -254,14 +263,14 @@ fn build_resource_fork_with_codec(raw: &[u8], codec: Codec) -> Result<Option<Vec
                 let (sender, receiver) = std::sync::mpsc::sync_channel(1);
                 receivers.push(receiver);
                 let cancelled = &cancelled;
+                let encode = &encode;
                 scope.spawn(move || {
                     let mut scratch = vec![0u8; scratch_len];
                     let mut block_index = worker;
                     while block_index < num_blocks && !cancelled.load(Ordering::Relaxed) {
                         let start = block_index * BLOCK;
                         let end = start.saturating_add(BLOCK).min(raw.len());
-                        let encoded =
-                            compress_block_with_codec(&raw[start..end], &mut scratch, codec);
+                        let encoded = encode(&raw[start..end], &mut scratch, codec);
                         if sender.send(encoded).is_err() {
                             break;
                         }
@@ -642,13 +651,31 @@ mod resource_fork_tests {
     use super::*;
 
     #[test]
+    fn parallel_encoding_failure_cancels_and_joins_workers() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let raw = vec![b'A'; BLOCK * 32];
+            let result = build_resource_fork_with_workers(&raw, Codec::Lzfse, 4, |_, _, _| None);
+            sender.send(result.unwrap().is_none()).unwrap();
+        });
+        assert!(
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("all scoped workers must stop after encoding fails")
+        );
+        thread.join().unwrap();
+    }
+
+    #[test]
     fn in_memory_resource_fork_round_trips_for_both_codecs() {
-        let raw = vec![b'A'; BLOCK * 2 + 17];
+        let raw: Vec<u8> = (0..BLOCK * 17 + 17)
+            .map(|i| b'A' + (i / BLOCK) as u8)
+            .collect();
         let num_blocks = raw.len().div_ceil(BLOCK);
         let table_len = resource_fork_table_len(num_blocks).unwrap();
 
         for codec in [Codec::Lzvn, Codec::Lzfse] {
-            let fork = build_resource_fork_with_codec(&raw, codec)
+            let fork = build_resource_fork_with_workers(&raw, codec, 4, compress_block_with_codec)
                 .unwrap()
                 .expect("repeated input should compress");
             assert_eq!(
@@ -926,7 +953,7 @@ mod local_codec_perf_probe {
         for index in 0..2 {
             timings[index].sort_by(f64::total_cmp);
             println!(
-                "codec={:?} native_load_median_s={:.4}",
+                "codec={:?} node_process_with_addon_median_s={:.4}",
                 codecs[index], timings[index][4]
             );
         }
