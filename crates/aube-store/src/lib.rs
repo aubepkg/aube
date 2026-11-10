@@ -4,6 +4,7 @@ extern crate log;
 pub mod dirs;
 
 mod cas;
+mod compression;
 mod git;
 mod index;
 mod integrity;
@@ -838,7 +839,7 @@ mod tests {
 
         let mut content = vec![0x7f, b'E', b'L', b'F'];
         content.extend_from_slice(&[0x5au8; 12_000]);
-        let gate = decmpfs::Gate::default();
+        let gate = crate::compression::Gate::default();
 
         let stored = store
             .import_bytes_with_gate("build/Release/addon.node", &content, false, Some(&gate))
@@ -865,7 +866,7 @@ mod tests {
         store.ensure_shards_exist().unwrap();
 
         let content = b"module.exports = 1;\n".to_vec();
-        let gate = decmpfs::Gate::default();
+        let gate = crate::compression::Gate::default();
         // A `.js` file does not match `**/*.node` → plain CAS path, but
         // still lands with the same key as the ungated import.
         let gated = store
@@ -889,7 +890,7 @@ mod tests {
         };
         let hybrid = synth_elf_hybrid(&raw);
 
-        let gate = decmpfs::Gate::default();
+        let gate = crate::compression::Gate::default();
         let stored = store
             .import_bytes_with_gate("build/Release/native.node", &hybrid, false, Some(&gate))
             .unwrap();
@@ -902,7 +903,7 @@ mod tests {
 
     /// Build a synthetic napi `--compress` hybrid: a minimal ELF64 with a
     /// `.PRESSED_DATA` section holding the bin-infra pressed-data blob for
-    /// `raw`. Mirrors decmpfs's own addon round-trip fixture.
+    /// `raw`. Mirrors the compressed-addon format used by napi-rs.
     #[cfg(test)]
     fn synth_elf_hybrid(raw: &[u8]) -> Vec<u8> {
         use sha2::{Digest as _, Sha512};

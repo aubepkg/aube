@@ -99,15 +99,6 @@ hex = "0.4"
 # Filesystem
 xx = { version = "2", features = ["fslock"] }
 reflink-copy = "0.1"
-# OS-level transparent per-file compression (APFS decmpfs / btrfs / NTFS)
-# applied to native addons as they land in the CAS. The `addon` feature
-# unwraps a napi `--compress` hybrid back to the raw `.node` before the
-# kernel re-compresses it transparently.
-# Pinned to 0.1.0: 0.1.2's FICLONE reflink path types the ioctl request as
-# `libc::c_ulong`, which is `libc::Ioctl` on glibc but `c_int` on musl, so it
-# fails to compile for *-unknown-linux-musl. Unpin once
-# https://github.com/SocketDev/decmpfs releases a fix.
-decmpfs = { version = "=0.1.5", features = ["addon"] }
 glob = "0.3"
 # BurntSushi's gitignore matcher (from ripgrep). Used by `aube pack` /
 # `aube publish` to honor `.npmignore` / `.gitignore` with full
@@ -154,6 +145,11 @@ ambient-id = "=0.0.11"
 thiserror = "2"
 miette = { version = "7", features = ["fancy"] }
 libc = "0.2"
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+] }
 seccompiler = "0.5"
 
 # Progress UI

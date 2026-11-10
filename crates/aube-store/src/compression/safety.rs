@@ -1,0 +1,356 @@
+//! Shared orchestration that gates every backend identically. Written once here
+//! so a backend only implements `detect` / `is_already_compressed` /
+//! `apply_inplace` and inherits all the safety invariants.
+
+use std::path::Path;
+
+use super::{Backend, Error, Outcome, SkipReason, verify};
+
+/// Reached only when the backend reported `Supported`. Fail-soft: a permission,
+/// read-only, or busy failure is a `Skipped` Outcome, never a hard `Err`. And if a
+/// (broken) backend ever leaves the file no longer loadable, roll back to the
+/// pre-apply bytes so a corrupt addon is never stranded.
+pub(crate) fn apply_guarded<B: Backend>(backend: &B, path: &Path) -> Result<Outcome, Error> {
+    // INV-idempotent.
+    if backend.is_already_compressed(path)? {
+        return Ok(Outcome::AlreadyCompressed {
+            before: verify::on_disk_bytes(path)?,
+        });
+    }
+
+    let before = verify::on_disk_bytes(path)?;
+
+    // INV-loadable: snapshot the native-binary magic so we can confirm the file
+    // still loads after compression (a post-compress *content* hash is vacuous —
+    // the kernel decompresses on read, so it always matches).
+    let magic_before = verify::magic_prefix(path)?;
+
+    // INV-rollback: keep the original bytes so a backend that produces a non-loadable
+    // result can be reverted. Cheap next to the one-time warm decompress.
+    let snapshot = std::fs::read(path).map_err(|source| Error::Io {
+        context: "snapshot",
+        source,
+    })?;
+
+    // INV-fail-soft: EACCES/EPERM/EROFS -> Skipped(PermissionDenied); EBUSY/ETXTBSY
+    // -> Skipped(Busy). A genuine, unclassifiable I/O error still propagates.
+    if let Err(err) = backend.apply_inplace(path, &snapshot) {
+        if let Error::Io { source, .. } = &err
+            && let Some(reason) = classify_skip(source)
+        {
+            return Ok(Outcome::Skipped { reason });
+        }
+        return Err(err);
+    }
+
+    verify_loadable_or_restore(backend, path, before, magic_before, &snapshot)
+}
+
+/// Post-apply gate for the in-place path: if the file no longer carries its
+/// native-binary magic the backend broke it, so restore the snapshot and report
+/// `Skipped(NotLoadable)`; otherwise classify the win. Split out so the
+/// not-loadable rollback is unit-testable without a backend that corrupts a file
+/// (pass a `magic_before` the file no longer matches).
+fn verify_loadable_or_restore<B: Backend>(
+    backend: &B,
+    path: &Path,
+    before: u64,
+    magic_before: [u8; 4],
+    snapshot: &[u8],
+) -> Result<Outcome, Error> {
+    if verify::magic_prefix(path)? != magic_before {
+        restore(path, snapshot)?;
+        return Ok(classify_outcome(false, before, before, None));
+    }
+
+    // INV-verify: prefer the backend's authoritative signal (btrfs FIEMAP ENCODED —
+    // st_blocks reports the logical size there, so a real win is invisible to it).
+    // Where the backend has no special signal (APFS/NTFS), fall back to the generic
+    // allocated-bytes drop.
+    let after = verify::on_disk_bytes(path)?;
+    Ok(classify_outcome(
+        true,
+        before,
+        after,
+        backend.compressed_on_disk(path)?,
+    ))
+}
+
+/// Map the post-apply facts to an Outcome. Pure (no I/O) so every branch is unit
+/// testable: not loadable → Skipped(NotLoadable); else the backend's compression
+/// signal (or, absent one, an allocated-bytes drop) decides Compressed vs NoGain.
+fn classify_outcome(loadable: bool, before: u64, after: u64, signal: Option<bool>) -> Outcome {
+    if !loadable {
+        return Outcome::Skipped {
+            reason: SkipReason::NotLoadable,
+        };
+    }
+    if signal.unwrap_or(after < before) {
+        Outcome::Compressed { before, after }
+    } else {
+        Outcome::NoGain { before, after }
+    }
+}
+
+/// Map a backend I/O failure to a non-fatal `Skipped` reason, or `None` to let it
+/// propagate as a hard error. Uses both `ErrorKind` (cross-platform, esp. Windows)
+/// and the POSIX errno (stable across Linux/macOS), so it needs no newer-than-1.0
+/// `ErrorKind` variants.
+fn classify_skip(err: &std::io::Error) -> Option<SkipReason> {
+    if err.kind() == std::io::ErrorKind::PermissionDenied {
+        return Some(SkipReason::PermissionDenied);
+    }
+    classify_errno(err.raw_os_error()?)
+}
+
+// Per-platform errno classification. Windows `raw_os_error()` is the Win32 space,
+// which does NOT coincide with POSIX (e.g. 32 = SHARING_VIOLATION on Windows but
+// EPIPE on unix), so the two maps are mutually exclusive by cfg.
+#[cfg(not(windows))]
+fn classify_errno(code: i32) -> Option<SkipReason> {
+    match code {
+        1 | 13 | 30 => Some(SkipReason::PermissionDenied), // EPERM/EACCES/EROFS
+        16 | 26 => Some(SkipReason::Busy),                 // EBUSY/ETXTBSY
+        27 => Some(SkipReason::TooLarge),                  // EFBIG
+        _ => None,
+    }
+}
+#[cfg(windows)]
+fn classify_errno(code: i32) -> Option<SkipReason> {
+    match code {
+        5 | 19 => Some(SkipReason::PermissionDenied), // ACCESS_DENIED / WRITE_PROTECT
+        32 | 33 => Some(SkipReason::Busy),            // SHARING_VIOLATION / LOCK_VIOLATION
+        _ => None,
+    }
+}
+
+/// One-pass guarded write of `content` to `path` as an OS-compressed file. Reached
+/// only when the backend reported `Supported`. The backend writes the bytes AS the
+/// file is created (decmpfs built from `content`, btrfs codec-then-write, NTFS
+/// FSCTL-then-write) — no write-then-read-back. Fail-soft mirrors `apply_guarded`:
+/// a permission/busy/too-large failure becomes a `Skipped` Outcome and the caller
+/// is expected to fall back to a plain write; an unclassifiable I/O error
+/// propagates. After a successful apply the kernel read-back is verified
+/// byte-identical to `content` (the transparent-compression oracle), and the file
+/// is restored to a plain write of `content` if it somehow doesn't match.
+pub(crate) fn compress_bytes_guarded<B: Backend>(
+    backend: &B,
+    path: &Path,
+    content: &[u8],
+) -> Result<Outcome, Error> {
+    if let Err(err) = backend.apply_bytes(path, content, None) {
+        if let Error::Io { source, .. } = &err
+            && let Some(reason) = classify_skip(source)
+        {
+            return Ok(Outcome::Skipped { reason });
+        }
+        return Err(err);
+    }
+
+    // Oracle: a normal read must hand back the exact bytes we asked to store.
+    verify_readback_or_restore(backend, path, content)
+}
+
+/// Post-apply oracle for the one-pass path: a normal read must hand back exactly
+/// `content`. If the backend produced something that doesn't decode identically,
+/// restore a plain write of `content` and report `Skipped(IntegrityRevert)` so an
+/// install is never left with a corrupt file; otherwise classify the win. Split
+/// out so the mismatch-rollback is unit-testable without a backend that corrupts
+/// the read-back (point it at a file whose bytes differ from `content`).
+fn verify_readback_or_restore<B: Backend>(
+    backend: &B,
+    path: &Path,
+    content: &[u8],
+) -> Result<Outcome, Error> {
+    let after = verify::on_disk_bytes(path)?;
+    if !verify::readback_matches(path, content)? {
+        restore(path, content)?;
+        return Ok(Outcome::Skipped {
+            reason: SkipReason::IntegrityRevert,
+        });
+    }
+
+    let before = content.len() as u64;
+    Ok(classify_outcome(
+        true,
+        before,
+        after,
+        backend.compressed_on_disk(path)?,
+    ))
+}
+
+/// Atomic restore of the pre-apply bytes (sibling temp + rename). Returns `Err`
+/// when the rollback itself fails (e.g. `ENOSPC`, a read-only dir) — the caller
+/// MUST surface that as a hard error rather than a benign `Skipped`, else a
+/// corrupted file is left on disk while the outcome reads as non-fatal.
+fn restore(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    super::plain_write(path, bytes).map_err(|error| match error {
+        Error::Io { source, .. } => Error::Io {
+            context: "rollback restore",
+            source,
+        },
+        other => other,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compression::{Gate, Support, compress_bytes_with};
+
+    #[test]
+    #[cfg(unix)]
+    fn plain_fallback_publishes_world_readable_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("addon.node");
+        // Exercise the importer fallback, including replacement of a private file.
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        compress_bytes_with(
+            &BrokenBackend { fail: true },
+            &path,
+            b"original",
+            &Gate::any(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        assert_eq!(std::fs::read(path).unwrap(), b"original");
+    }
+
+    struct BrokenBackend {
+        fail: bool,
+    }
+    impl Backend for BrokenBackend {
+        fn detect(&self, _: &Path) -> Result<Support, Error> {
+            Ok(Support::Supported)
+        }
+        fn is_already_compressed(&self, _: &Path) -> Result<bool, Error> {
+            Ok(false)
+        }
+        fn apply_inplace(&self, path: &Path, bytes: &[u8]) -> Result<(), Error> {
+            self.apply_bytes(path, bytes, None)
+        }
+        fn apply_bytes(
+            &self,
+            path: &Path,
+            _: &[u8],
+            _: Option<std::fs::Permissions>,
+        ) -> Result<(), Error> {
+            if self.fail {
+                return Err(Error::Io {
+                    context: "injected failure",
+                    source: std::io::Error::other("write failed"),
+                });
+            }
+            std::fs::write(path, b"corrupt output").unwrap();
+            Ok(())
+        }
+        fn compressed_on_disk(&self, _: &Path) -> Result<Option<bool>, Error> {
+            Ok(Some(true))
+        }
+    }
+
+    #[test]
+    fn failed_backend_write_falls_back_to_original_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("addon.node");
+        let result = compress_bytes_with(
+            &BrokenBackend { fail: true },
+            &path,
+            b"original",
+            &Gate::any(),
+        )
+        .unwrap();
+        assert!(matches!(result, Outcome::Skipped { .. }));
+        assert_eq!(std::fs::read(path).unwrap(), b"original");
+    }
+
+    #[test]
+    fn corrupt_readback_restores_original_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("addon.node");
+        let result =
+            compress_bytes_guarded(&BrokenBackend { fail: false }, &path, b"original").unwrap();
+        assert!(matches!(
+            result,
+            Outcome::Skipped {
+                reason: SkipReason::IntegrityRevert
+            }
+        ));
+        assert_eq!(std::fs::read(path).unwrap(), b"original");
+    }
+
+    #[test]
+    fn rollback_failure_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(restore(dir.path(), b"cannot replace a directory").is_err());
+    }
+
+    #[test]
+    fn concurrent_restores_and_plain_writes_do_not_share_temporary_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("shared.node");
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for i in 0..8 {
+                let path = dir.path().join(format!("{i}.node"));
+                let shared = &shared;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let bytes = vec![i as u8; 128 * 1024];
+                    barrier.wait();
+                    for _ in 0..8 {
+                        restore(&path, &bytes).unwrap();
+                        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+                        super::super::plain_write(shared, &bytes).unwrap();
+                        let observed = std::fs::read(shared).unwrap();
+                        assert_eq!(observed.len(), bytes.len());
+                        assert!(observed.iter().all(|b| *b == observed[0]));
+                    }
+                });
+            }
+        });
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 9);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn apfs_compressible_input_remains_compressed() {
+        use std::os::unix::fs::PermissionsExt;
+        // Change umask only in an isolated test process, never in the test suite.
+        if std::env::var_os("AUBE_TEST_RESTRICTIVE_UMASK").is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "compression::safety::tests::apfs_compressible_input_remains_compressed",
+                ])
+                .env("AUBE_TEST_RESTRICTIVE_UMASK", "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        unsafe {
+            libc::umask(0o077);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let backend = crate::compression::Os;
+        if !matches!(backend.detect(dir.path()).unwrap(), Support::Supported) {
+            return;
+        }
+        let path = dir.path().join("addon.node");
+        let bytes = vec![b'A'; 1024 * 1024];
+        let outcome = compress_bytes_guarded(&backend, &path, &bytes).unwrap();
+        assert!(matches!(outcome, Outcome::Compressed { .. }), "{outcome:?}");
+        assert!(backend.is_already_compressed(&path).unwrap());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+}
