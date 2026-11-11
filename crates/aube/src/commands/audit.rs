@@ -712,15 +712,44 @@ async fn write_fix_lockfile_update(
         .wrap_err("failed to resolve audit fixes")?;
 
     let after = resolved_versions_by_name(&new_graph, filter, no_optional, &vulnerable_names);
-    let member_only: BTreeSet<&str> =
-        super::collect_workspace_dep_closure(graph, filter, no_optional)
-            .values()
-            .map(|pkg| pkg.registry_name())
-            .filter(|name| !before.contains_key(*name))
-            .collect();
+    let workspace_closure = super::collect_workspace_dep_closure(graph, filter, no_optional);
+    let member_only: BTreeSet<&str> = workspace_closure
+        .values()
+        .map(|pkg| pkg.registry_name())
+        .filter(|name| !before.contains_key(*name))
+        .collect();
+    // The resolve covers only the root manifest, so it cannot fix a version
+    // that only workspace members reach, also when the root reaches a safe
+    // version of the same package.
+    let mut member_versions: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for pkg in workspace_closure.values() {
+        let name = pkg.registry_name();
+        if !before
+            .get(name)
+            .is_some_and(|versions| versions.contains(&pkg.version))
+        {
+            member_versions
+                .entry(name)
+                .or_default()
+                .insert(&pkg.version);
+        }
+    }
     let remaining: Vec<Row> = rows
         .iter()
         .filter(|row| {
+            if member_versions
+                .get(row.name.as_str())
+                .is_some_and(|versions| {
+                    versions.iter().any(|version| {
+                        version_is_vulnerable(
+                            version,
+                            std::slice::from_ref(&row.vulnerable_versions),
+                        )
+                    })
+                })
+            {
+                return true;
+            }
             // A name absent from the root closure (a workspace member's
             // dependency) cannot be verified as fixed, so it stays.
             match after.get(&row.name) {
