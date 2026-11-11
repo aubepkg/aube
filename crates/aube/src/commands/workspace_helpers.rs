@@ -56,9 +56,9 @@ pub(crate) fn shared_workspace_graph(
 }
 
 /// Collect the transitive dep-path closure reachable from the filtered
-/// root deps, keyed by dep_path for stable iteration. Used by audit,
-/// sbom, and anything else that needs "which packages would apply if
-/// the user ran install in this mode".
+/// root deps, keyed by dep_path for stable iteration. Used by audit and
+/// anything else that needs "which packages would apply if the user ran
+/// install in this mode".
 pub(crate) fn collect_dep_closure(
     graph: &aube_lockfile::LockfileGraph,
     filter: DepFilter,

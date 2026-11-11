@@ -1,7 +1,7 @@
 //! `aube sbom` — emit a Software Bill of Materials for the installed graph.
 //!
 //! Reads the lockfile and installed package manifests (no network, no linking),
-//! walks the root importer's direct deps transitively, and serializes the
+//! walks every importer's direct deps transitively, and serializes the
 //! closure as either CycloneDX 1.5 JSON or SPDX 2.3 JSON. Pure read; does not
 //! modify `node_modules/` or take the project lock.
 
@@ -80,7 +80,7 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
     }
 
     let filter = DepFilter::from_flags(args.prod, args.dev);
-    let closure = super::collect_dep_closure(&graph, filter, false);
+    let closure = super::collect_workspace_dep_closure(&graph, filter, false);
     if args.exclude_peers && args.format != SbomFormat::Cyclonedx {
         return Err(miette::miette!(
             "--exclude-peers is only supported with --format cyclonedx"

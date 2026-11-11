@@ -195,3 +195,23 @@ JSON
 	assert_success
 	assert_output --partial 'aube-test-optional-win32'
 }
+
+@test "aube sbom includes packages reached only from a workspace member" {
+	cat >package.json <<'JSON'
+{ "name": "sbom-root", "version": "1.0.0", "private": true }
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "apps/*"
+YAML
+	mkdir -p apps/a
+	cat >apps/a/package.json <<'JSON'
+{ "name": "a", "version": "1.0.0", "dependencies": { "is-odd": "^3.0.1" } }
+JSON
+	run aube install
+	assert_success
+
+	run aube sbom
+	assert_success
+	assert_output --partial '"pkg:npm/is-odd@3.0.1"'
+}
