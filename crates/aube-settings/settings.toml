@@ -2082,6 +2082,68 @@ sources.npmrc = ["dedupePeers"]
 sources.workspaceYaml = ["dedupePeers"]
 examples = []
 
+[addMissingPeerTypes]
+description = "Record pnpm's `addMissingPeerTypes` in the lockfile `settings:` header."
+type = "bool"
+default = "false"
+docs = """
+pnpm records this in `pnpm-lock.yaml`'s `settings:` block and rejects a
+frozen install when the configured value differs from the lockfile's.
+aube writes the current value (omitted when `false`, like pnpm) so a
+lockfile written by aube stays acceptable to `pnpm install
+--frozen-lockfile`. aube does not change resolution based on it.
+"""
+sources.cli = []
+sources.env = ["npm_config_add_missing_peer_types", "NPM_CONFIG_ADD_MISSING_PEER_TYPES", "AUBE_ADD_MISSING_PEER_TYPES"]
+sources.npmrc = ["addMissingPeerTypes"]
+sources.workspaceYaml = ["addMissingPeerTypes"]
+examples = []
+
+[injectWorkspacePackages]
+description = "Record pnpm's `injectWorkspacePackages` in the lockfile `settings:` header."
+type = "bool"
+default = "false"
+docs = """
+pnpm records this in `pnpm-lock.yaml`'s `settings:` block and rejects a
+frozen install when the configured value differs from the lockfile's.
+aube writes the current value (omitted when `false`, like pnpm) so a
+lockfile written by aube stays acceptable to `pnpm install
+--frozen-lockfile`. aube does not change linking based on it.
+"""
+sources.cli = []
+sources.env = ["npm_config_inject_workspace_packages", "NPM_CONFIG_INJECT_WORKSPACE_PACKAGES", "AUBE_INJECT_WORKSPACE_PACKAGES"]
+sources.npmrc = ["injectWorkspacePackages"]
+sources.workspaceYaml = ["injectWorkspacePackages"]
+examples = []
+
+[autoDedupe]
+description = "Record pnpm's `autoDedupe` in the lockfile resolution settings."
+type = "bool"
+default = "false"
+docs = """
+Written to the lockfile `settings:` header only when
+`lockfile.includeResolutionSettings` is `true`, mirroring pnpm.
+"""
+sources.cli = []
+sources.env = ["npm_config_auto_dedupe", "NPM_CONFIG_AUTO_DEDUPE", "AUBE_AUTO_DEDUPE"]
+sources.npmrc = ["autoDedupe"]
+sources.workspaceYaml = ["autoDedupe"]
+examples = []
+
+[dedupeInjectedDeps]
+description = "Record pnpm's `dedupeInjectedDeps` in the lockfile resolution settings."
+type = "bool"
+default = "true"
+docs = """
+Written to the lockfile `settings:` header only when
+`lockfile.includeResolutionSettings` is `true`, mirroring pnpm.
+"""
+sources.cli = []
+sources.env = ["npm_config_dedupe_injected_deps", "NPM_CONFIG_DEDUPE_INJECTED_DEPS", "AUBE_DEDUPE_INJECTED_DEPS"]
+sources.npmrc = ["dedupeInjectedDeps"]
+sources.workspaceYaml = ["dedupeInjectedDeps"]
+examples = []
+
 [strictPeerDependencies]
 description = "Fail if peer dependencies are missing or invalid."
 type = "bool"

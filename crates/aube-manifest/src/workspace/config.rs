@@ -548,6 +548,26 @@ pub struct WorkspaceConfig {
     #[serde(default)]
     pub dedupe_peers: Option<bool>,
 
+    /// Recorded in the lockfile `settings:` header (pnpm parity).
+    /// Default: false.
+    #[serde(default)]
+    pub add_missing_peer_types: Option<bool>,
+
+    /// Recorded in the lockfile `settings:` header (pnpm parity).
+    /// Default: false.
+    #[serde(default)]
+    pub inject_workspace_packages: Option<bool>,
+
+    /// Recorded in the lockfile resolution settings (pnpm parity).
+    /// Default: false.
+    #[serde(default)]
+    pub auto_dedupe: Option<bool>,
+
+    /// Recorded in the lockfile resolution settings (pnpm parity).
+    /// Default: true.
+    #[serde(default)]
+    pub dedupe_injected_deps: Option<bool>,
+
     /// Consult the root workspace importer's direct deps for peer
     /// resolution before falling back to a graph-wide scan.
     /// Default: true.

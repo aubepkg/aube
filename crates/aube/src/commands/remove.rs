@@ -211,6 +211,13 @@ pub async fn run(
                     graph.check_catalogs_drift(&workspace_catalogs),
                     aube_lockfile::DriftStatus::Fresh
                 )
+                && matches!(
+                    graph.check_settings_drift(
+                        &super::with_settings_ctx(&cwd, install::resolve_lockfile_settings,),
+                        lockfile_kind,
+                    ),
+                    aube_lockfile::DriftStatus::Fresh
+                )
         }) {
         Some(graph) => {
             eprintln!("Pruned lockfile to {} packages", graph.packages.len());

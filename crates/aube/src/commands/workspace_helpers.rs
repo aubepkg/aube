@@ -174,7 +174,13 @@ pub(crate) fn write_and_log_lockfile(
     manifest: &aube_manifest::PackageJson,
 ) -> miette::Result<PathBuf> {
     let kind = super::lockfile_kind_for_write(cwd)?;
-    let written_path = aube_lockfile::write_lockfile_as(cwd, graph, manifest, kind)
+    // Graphs that came from parsing the lockfile (prune/merge paths) carry
+    // the settings recorded when it was written; restamp them from the
+    // current config so a changed setting isn't restored from the old file.
+    let mut graph = graph.clone();
+    graph.settings.extra =
+        super::with_settings_ctx(cwd, super::install::resolve_lockfile_settings_extra);
+    let written_path = aube_lockfile::write_lockfile_as(cwd, &graph, manifest, kind)
         .into_diagnostic()
         .wrap_err("failed to write lockfile")?;
     eprintln!(

@@ -128,6 +128,11 @@ pub struct Resolver {
     /// the `canonical.settings.exclude_links_from_lockfile` flag the
     /// writer reads.
     exclude_links_from_lockfile: bool,
+    /// Header settings pnpm records beyond the modeled ones
+    /// (`dedupePeers`, `injectWorkspacePackages`, …), derived from the
+    /// current configuration and stamped into
+    /// `LockfileGraph::settings.extra`.
+    lockfile_settings_extra: BTreeMap<String, serde_json::Value>,
     /// User-declared override for the host platform triple, used when
     /// deciding whether an optional dep's `os`/`cpu`/`libc` constraints
     /// are satisfied. Empty fields fall back to the host.
