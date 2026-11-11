@@ -13,9 +13,9 @@ use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::LookupIpStrategy;
@@ -89,33 +89,44 @@ impl State {
     }
 }
 
-/// Marks a queued lookup as abandoned when the requesting future is dropped.
-struct CancelOnDrop(Arc<AtomicBool>);
+/// Holds a lookup's permit until the blocking closure claims it. If the
+/// requesting future is dropped first, this releases a permit still sitting
+/// in a closure queued behind a busy blocking pool.
+struct PermitSlot(Arc<Mutex<Option<OwnedSemaphorePermit>>>);
 
-impl Drop for CancelOnDrop {
+impl PermitSlot {
+    fn take(slot: &Mutex<Option<OwnedSemaphorePermit>>) -> Option<OwnedSemaphorePermit> {
+        // The guarded value is a plain Option, so a poisoned lock is still valid.
+        slot.lock().unwrap_or_else(PoisonError::into_inner).take()
+    }
+}
+
+impl Drop for PermitSlot {
     fn drop(&mut self) {
-        self.0.store(true, Ordering::Relaxed);
+        drop(Self::take(&self.0));
     }
 }
 
 async fn system_lookup(host: &str) -> Result<Vec<SocketAddr>, std::io::Error> {
-    let permit = SYSTEM_LOOKUPS
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(std::io::Error::other)?;
+    lookup_bounded(SYSTEM_LOOKUPS.clone(), host).await
+}
+
+async fn lookup_bounded(
+    limit: Arc<Semaphore>,
+    host: &str,
+) -> Result<Vec<SocketAddr>, std::io::Error> {
+    let permit = limit.acquire_owned().await.map_err(std::io::Error::other)?;
     let host = host.to_owned();
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let _on_drop = CancelOnDrop(cancelled.clone());
-    // The permit moves into the blocking closure, so the slot stays taken
-    // until `getaddrinfo` actually returns, even if this future is dropped
-    // by a request timeout. A closure still queued behind a busy blocking
-    // pool when that happens skips the lookup and frees its slot at once.
+    let slot = Arc::new(Mutex::new(Some(permit)));
+    let _release_if_queued = PermitSlot(slot.clone());
+    // `getaddrinfo` cannot be cancelled, so a running lookup keeps its
+    // permit until it returns, even if this future is dropped by a request
+    // timeout. A closure still queued at that point finds the slot empty,
+    // skips the lookup, and its permit was already released by the guard.
     tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        if cancelled.load(Ordering::Relaxed) {
+        let Some(_permit) = PermitSlot::take(&slot) else {
             return Ok(Vec::new());
-        }
+        };
         std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 0)).map(Iterator::collect)
     })
     .await
@@ -241,6 +252,32 @@ mod tests {
     async fn system_lookup_resolves_localhost() {
         let addrs = system_lookup("localhost").await.unwrap();
         assert!(addrs.iter().any(|a| a.ip().is_loopback()));
+    }
+
+    #[test]
+    fn cancelled_queued_lookup_releases_its_permit_before_it_runs() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .max_blocking_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            // Occupy the only blocking thread so the lookup stays queued.
+            let (release, wait) = std::sync::mpsc::channel::<()>();
+            let busy = tokio::task::spawn_blocking(move || wait.recv());
+            let limit = Arc::new(Semaphore::new(1));
+            let lookup = lookup_bounded(limit.clone(), "localhost");
+            let timed_out = tokio::time::timeout(Duration::from_millis(50), lookup).await;
+            assert!(timed_out.is_err(), "lookup must still be queued");
+            assert_eq!(
+                limit.available_permits(),
+                1,
+                "a cancelled, still-queued lookup must free its permit"
+            );
+            release.send(()).unwrap();
+            busy.await.unwrap().unwrap();
+        });
     }
 
     #[test]
