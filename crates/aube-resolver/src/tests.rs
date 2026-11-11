@@ -4798,6 +4798,72 @@ snapshots:
 }
 
 #[tokio::test]
+async fn lockfile_reuse_keeps_optional_peer_provided_by_preserved_importer() {
+    for source in ["online", "offline"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pnpm-lock.yaml");
+        std::fs::write(
+            &path,
+            r#"
+lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      host:
+        specifier: ^1
+        version: 1.0.0(peer@1.0.0)
+  other:
+    dependencies:
+      peer:
+        specifier: ^1
+        version: 1.0.0
+packages:
+  host@1.0.0:
+    peerDependencies:
+      peer: ^1
+    peerDependenciesMeta:
+      peer:
+        optional: true
+  peer@1.0.0: {}
+snapshots:
+  host@1.0.0(peer@1.0.0):
+    optionalDependencies:
+      peer: 1.0.0
+  peer@1.0.0: {}
+"#,
+        )
+        .unwrap();
+        let existing = aube_lockfile::pnpm::parse(&path).unwrap();
+        let client = aube_registry::client::RegistryClient::new("http://127.0.0.1:0");
+        let client = if source == "offline" {
+            client.with_network_mode(aube_registry::NetworkMode::Offline)
+        } else {
+            client
+        };
+        let mut resolver = Resolver::new(Arc::new(client))
+            .with_preserved_importers(BTreeSet::from(["other".to_string()]));
+        let mut host = make_packument("host", &["1.0.0"], "1.0.0");
+        let meta = host.versions.get_mut("1.0.0").unwrap();
+        meta.peer_dependencies.insert("peer".into(), "^1".into());
+        meta.peer_dependencies_meta
+            .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
+        resolver.cache.insert("host".into(), host.into());
+        let mut manifest = PackageJson::default();
+        manifest.dependencies.insert("host".into(), "^1".into());
+
+        let graph = resolver.resolve(&manifest, Some(&existing)).await.unwrap();
+
+        let host = graph
+            .packages
+            .values()
+            .find(|pkg| pkg.name == "host")
+            .unwrap();
+        assert!(host.dep_path.contains("(peer@1.0.0)"), "{source}");
+        assert!(graph_has_package(&graph, "peer", "1.0.0"), "{source}");
+    }
+}
+
+#[tokio::test]
 async fn lockfile_reuse_optional_peer_refresh_preserves_transitive_pins() {
     let client = Arc::new(aube_registry::client::RegistryClient::new(
         "http://127.0.0.1:0",

@@ -151,6 +151,10 @@ pub struct Resolver {
     /// dropped before enqueueing — the resolver never fetches or locks it.
     /// Mirrors pnpm's `createOptionalDependenciesRemover` read-package hook.
     ignored_optional_dependencies: BTreeSet<String>,
+    /// Importers of the existing lockfile that this resolve does not
+    /// re-resolve and the caller writes back unchanged. Their locked
+    /// packages stay installed, so they can still provide optional peers.
+    preserved_importers: BTreeSet<String>,
     /// pnpm's `resolution-mode`.
     resolution_mode: ResolutionMode,
     /// Project root used to resolve `file:` / `link:` paths to the

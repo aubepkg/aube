@@ -865,3 +865,68 @@ EOF2
 	run grep "is-odd@0.1.2" aube-lock.yaml
 	assert_failure
 }
+
+@test "aube update -r --no-save keeps an optional peer another member provides" {
+	cat >package.json <<'EOF2'
+{"name":"root","version":"0.0.0","private":true}
+EOF2
+	cat >pnpm-workspace.yaml <<'EOF2'
+packages:
+  - "packages/*"
+EOF2
+	mkdir -p packages/a packages/b
+	cat >packages/a/package.json <<'EOF2'
+{"name":"a","version":"1.0.0","dependencies":{"fdir":"6.5.0","is-odd":"0.1.2"}}
+EOF2
+	cat >packages/b/package.json <<'EOF2'
+{"name":"b","version":"1.0.0","dependencies":{"picomatch":"4.0.4"}}
+EOF2
+	run aube install
+	assert_success
+	run grep "fdir@6.5.0(picomatch@4.0.4):" aube-lock.yaml
+	assert_success
+
+	cat >packages/a/package.json <<'EOF2'
+{"name":"a","version":"1.0.0","dependencies":{"fdir":"6.5.0","is-odd":">=0.1.0"}}
+EOF2
+	run aube install
+	assert_success
+	run aube update -r --no-save is-odd
+	assert_success
+
+	run grep "is-odd@3.0.1:" aube-lock.yaml
+	assert_success
+	run grep "fdir@6.5.0(picomatch@4.0.4):" aube-lock.yaml
+	assert_success
+}
+
+@test "aube update --no-save at the root keeps an optional peer a member provides" {
+	cat >package.json <<'EOF2'
+{"name":"root","version":"0.0.0","private":true,"dependencies":{"fdir":"6.5.0","is-odd":"0.1.2"}}
+EOF2
+	cat >pnpm-workspace.yaml <<'EOF2'
+packages:
+  - "packages/*"
+EOF2
+	mkdir -p packages/b
+	cat >packages/b/package.json <<'EOF2'
+{"name":"b","version":"1.0.0","dependencies":{"picomatch":"4.0.4"}}
+EOF2
+	run aube install
+	assert_success
+	run grep "fdir@6.5.0(picomatch@4.0.4):" aube-lock.yaml
+	assert_success
+
+	cat >package.json <<'EOF2'
+{"name":"root","version":"0.0.0","private":true,"dependencies":{"fdir":"6.5.0","is-odd":">=0.1.0"}}
+EOF2
+	run aube install
+	assert_success
+	run aube update --no-save is-odd
+	assert_success
+
+	run grep "is-odd@3.0.1:" aube-lock.yaml
+	assert_success
+	run grep "fdir@6.5.0(picomatch@4.0.4):" aube-lock.yaml
+	assert_success
+}

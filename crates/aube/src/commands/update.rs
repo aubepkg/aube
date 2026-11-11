@@ -765,7 +765,21 @@ async fn run_inner(
             None => (None, Vec::new()),
         };
     let workspace_package_versions = workspace_package_versions(&cwd)?;
-    let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs)?;
+    // This run resolves one importer. The lockfile writer keeps the others,
+    // so their packages can still provide optional peers.
+    let resolved_importer = if existing_is_own {
+        "."
+    } else {
+        cwd_importer.as_str()
+    };
+    let preserved_importers = filtered_existing
+        .iter()
+        .flat_map(|graph| graph.importers.keys())
+        .filter(|importer| importer.as_str() != resolved_importer)
+        .cloned()
+        .collect();
+    let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs)?
+        .with_preserved_importers(preserved_importers);
     if let Some(host) = read_package_host {
         resolver = resolver
             .with_read_package_hook(Box::new(host) as Box<dyn aube_resolver::ReadPackageHook>);
