@@ -804,7 +804,8 @@ mod tests {
         let cmd = tmp.path().join("tool.cmd");
         std::fs::write(&cmd, "@echo off\r\n").unwrap();
         let path = tmp.path().as_os_str().to_owned();
-        assert_eq!(super::find_in_path(tmp.path(), "tool", &path), Some(cmd));
+        let found = super::find_in_path(tmp.path(), "tool", &path).unwrap();
+        assert_eq!(found.canonicalize().unwrap(), cmd.canonicalize().unwrap());
     }
 
     #[cfg(unix)]
