@@ -723,3 +723,23 @@ NODE
 	run grep -c injectWorkspacePackages pnpm-lock.yaml
 	assert_output 0
 }
+
+@test "remove re-resolves when a setting changed since pnpm-lock.yaml was written" {
+	cat >package.json <<-'EOF2'
+		{
+		  "name": "test-pnpm-settings-remove",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1", "is-number": "6.0.0" }
+		}
+	EOF2
+	printf 'default-lockfile-format=pnpm\n' >>.npmrc
+	run aube install --no-frozen-lockfile
+	assert_success
+
+	printf 'peersSuffixMaxLength: 500\n' >pnpm-workspace.yaml
+	run aube remove is-number
+	assert_success
+	refute_output --partial "Pruned lockfile"
+	run grep 'peersSuffixMaxLength: 500' pnpm-lock.yaml
+	assert_success
+}
