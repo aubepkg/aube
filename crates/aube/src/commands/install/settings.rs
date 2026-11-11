@@ -1429,34 +1429,59 @@ impl PeerDependencyRules {
             return true;
         }
         if let Some(found) = u.found.as_deref()
-            && self.allowed_versions_permit(&u.from_name, &u.peer_name, found)
+            && self.allowed_versions_permit(&u.from_name, &u.from_version, &u.peer_name, found)
         {
             return true;
         }
         false
     }
 
-    fn allowed_versions_permit(&self, parent: &str, peer: &str, found: &str) -> bool {
-        let scoped_key = format!("{parent}>{peer}");
-        let candidates = [
-            self.allowed_versions.get(&scoped_key),
-            self.allowed_versions.get(peer),
-        ];
+    /// Keys take three forms: `peer`, `parent>peer`, and
+    /// `parent@range>peer`, where the range must contain the parent's
+    /// resolved version. Scoped names keep their leading `@`.
+    fn allowed_versions_permit(
+        &self,
+        parent: &str,
+        parent_version: &str,
+        peer: &str,
+        found: &str,
+    ) -> bool {
         let Ok(found_v) = node_semver::Version::parse(found) else {
             return false;
         };
-        candidates
-            .into_iter()
-            .flatten()
-            .any(|range| matches_range(range, &found_v))
+        self.allowed_versions.iter().any(|(key, range)| {
+            let Some((selector, key_peer)) = key.rsplit_once('>') else {
+                return key == peer && matches_range(range, &found_v);
+            };
+            if key_peer != peer {
+                return false;
+            }
+            let parent_matches = match selector.rfind('@').filter(|&at| at > 0) {
+                Some(at) => {
+                    &selector[..at] == parent
+                        && node_semver::Version::parse(parent_version).is_ok_and(|version| {
+                            node_semver::Range::parse(&selector[at + 1..])
+                                .is_ok_and(|r| r.satisfies(&version))
+                        })
+                }
+                None => selector == parent,
+            };
+            parent_matches && matches_range(range, &found_v)
+        })
     }
 }
 
+/// pnpm admits a prerelease provider whose base release is in range, and
+/// `*` admits every version including prereleases.
 fn matches_range(range: &str, found: &node_semver::Version) -> bool {
-    match node_semver::Range::parse(range) {
-        Ok(r) => r.satisfies(found),
-        Err(_) => false,
+    let Ok(r) = node_semver::Range::parse(range) else {
+        return false;
+    };
+    if r.satisfies(found) || range.trim() == "*" {
+        return true;
     }
+    let base = format!("{}.{}.{}", found.major, found.minor, found.patch);
+    node_semver::Version::parse(&base).is_ok_and(|v| r.satisfies(&v))
 }
 
 fn compile_peer_patterns(field: &str, raw: &[String]) -> Vec<glob::Pattern> {
@@ -1641,6 +1666,7 @@ mod peer_dependency_rules_tests {
         aube_resolver::UnmetPeer {
             from_dep_path: format!("{parent}@0.0.0"),
             from_name: parent.to_string(),
+            from_version: "0.0.0".to_string(),
             peer_name: peer.to_string(),
             declared: declared.to_string(),
             found: found.map(String::from),
@@ -1701,6 +1727,40 @@ mod peer_dependency_rules_tests {
         assert!(!r.silences(&unmet("lib", "react", "^18.0.0", Some("20.0.0"))));
         // Missing peers are not silenced by allowed_versions.
         assert!(!r.silences(&unmet("lib", "react", "^18.0.0", None)));
+    }
+
+    #[test]
+    fn allowed_versions_parent_range_key_matches_parent_version() {
+        let r = rules(&[], &[], &[("use-sync-external-store@1>react", "19")]);
+        let mut u = unmet(
+            "use-sync-external-store",
+            "react",
+            "^18.0.0",
+            Some("19.2.0"),
+        );
+        u.from_version = "1.2.0".to_string();
+        assert!(r.silences(&u));
+        u.from_version = "2.0.0".to_string();
+        assert!(!r.silences(&u));
+
+        let scoped = rules(&[], &[], &[("@scope/lib@^2>react", "19")]);
+        let mut u = unmet("@scope/lib", "react", "^18.0.0", Some("19.0.0"));
+        u.from_version = "2.1.0".to_string();
+        assert!(scoped.silences(&u));
+
+        // A local (`file:`) parent has no version in its dep_path; the
+        // manifest version still has to match the rule.
+        let local = rules(&[], &[], &[("consumer@1>react", "19")]);
+        let mut u = unmet("consumer", "react", "^18.0.0", Some("19.0.0"));
+        u.from_dep_path = "consumer@file+abc123".to_string();
+        u.from_version = "1.2.0".to_string();
+        assert!(local.silences(&u));
+    }
+
+    #[test]
+    fn allowed_versions_star_admits_prereleases() {
+        let r = rules(&[], &[], &[("react", "*")]);
+        assert!(r.silences(&unmet("lib", "react", "^18.0.0", Some("19.0.0-canary-1"))));
     }
 
     #[test]
