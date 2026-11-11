@@ -40,9 +40,10 @@ struct State {
 static USE_SYSTEM: LazyLock<Arc<AtomicBool>> = LazyLock::new(Arc::default);
 
 /// `getaddrinfo` cannot be cancelled, so a stalled lookup keeps its
-/// blocking thread. Cap how many may be in flight so they can never
-/// exhaust the blocking pool that install work shares.
-const MAX_SYSTEM_LOOKUPS: usize = 8;
+/// blocking thread. Cap how many may be in flight at half of aube's
+/// 8-thread blocking pool on Linux, so stalled lookups can never starve the
+/// install work that shares it.
+const MAX_SYSTEM_LOOKUPS: usize = 4;
 static SYSTEM_LOOKUPS: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(MAX_SYSTEM_LOOKUPS)));
 
