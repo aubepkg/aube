@@ -4520,6 +4520,284 @@ async fn lockfile_reuse_recomputes_optional_peer_edges() {
 }
 
 #[tokio::test]
+async fn lockfile_reuse_preserves_existing_optional_only_peers() {
+    for dedupe in [false, true] {
+        for auto_install in [false, true] {
+            for source in ["online", "offline"] {
+                for provider in [
+                    "optional-only",
+                    "independent",
+                    "new-direct-in-range",
+                    "new-direct-out-of-range",
+                    "independent-new-direct",
+                    "new-ancestor-in-range",
+                    "new-ancestor-out-of-range",
+                    "workspace-other-in-range",
+                    "workspace-other-out-of-range",
+                    "workspace-root-on-in-range",
+                    "workspace-root-on-out-of-range",
+                    "workspace-root-off-in-range",
+                    "workspace-root-off-out-of-range",
+                    "removed-consumer",
+                    // Intentional aube pruning from #1920 unused-optional-peers;
+                    // pnpm keeps the provider after these removals.
+                    "removed-direct",
+                    "removed-transitive",
+                    // Host-filter contract, independent of pnpm parity.
+                    "filtered",
+                    "removed-filtered-ancestor",
+                    "removed-ignored-ancestor",
+                    "removed-vulnerable-ancestor",
+                ] {
+                    let dir = tempfile::tempdir().unwrap();
+                    let path = dir.path().join("pnpm-lock.yaml");
+                    // pnpm keeps this optional-only binding after removing the
+                    // original direct provider, including its optional subtree.
+                    std::fs::write(
+                        &path,
+                        r#"
+lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      host:
+        specifier: ^1
+        version: 1.0.0(peer@1.0.0)
+packages:
+  host@1.0.0:
+    peerDependencies:
+      peer: ^1
+    peerDependenciesMeta:
+      peer:
+        optional: true
+  peer@1.0.0: {}
+  child@1.0.0: {}
+snapshots:
+  host@1.0.0(peer@1.0.0):
+    optionalDependencies:
+      peer: 1.0.0
+  peer@1.0.0:
+    dependencies:
+      child: 1.0.0
+    optional: true
+  child@1.0.0:
+    optional: true
+"#,
+                    )
+                    .unwrap();
+                    let mut existing = aube_lockfile::pnpm::parse(&path).unwrap();
+                    if provider == "removed-direct" {
+                        existing.importers.get_mut(".").unwrap().push(DirectDep {
+                            name: "peer".into(),
+                            dep_path: "peer@1.0.0".into(),
+                            dep_type: DepType::Optional,
+                            specifier: Some("^1".into()),
+                        });
+                    } else if matches!(
+                        provider,
+                        "removed-transitive"
+                            | "independent"
+                            | "independent-new-direct"
+                            | "removed-filtered-ancestor"
+                            | "removed-ignored-ancestor"
+                            | "removed-vulnerable-ancestor"
+                    ) {
+                        let holder = mk_locked("holder", "1.0.0", &[("peer", "1.0.0")], &[]);
+                        existing.packages.insert(holder.dep_path.clone(), holder);
+                        existing.importers.get_mut(".").unwrap().push(DirectDep {
+                            name: "holder".into(),
+                            dep_path: "holder@1.0.0".into(),
+                            dep_type: DepType::Production,
+                            specifier: Some("^1".into()),
+                        });
+                    } else if provider == "filtered" {
+                        existing.packages.get_mut("peer@1.0.0").unwrap().os =
+                            vec!["unsupported-test-platform".into()].into();
+                    }
+                    if provider.starts_with("removed-") && provider.ends_with("-ancestor") {
+                        let holder = existing.packages.get_mut("holder@1.0.0").unwrap();
+                        holder.optional = true;
+                        if provider == "removed-filtered-ancestor" {
+                            holder.os = vec!["unsupported-test-platform".into()].into();
+                        }
+                        existing
+                            .importers
+                            .get_mut(".")
+                            .unwrap()
+                            .last_mut()
+                            .unwrap()
+                            .dep_type = DepType::Optional;
+                    }
+                    if provider == "independent" {
+                        existing
+                            .packages
+                            .get_mut("host@1.0.0(peer@1.0.0)")
+                            .unwrap()
+                            .peer_dependencies
+                            .insert("peer".into(), "^2".into());
+                    }
+                    let client = aube_registry::client::RegistryClient::new("http://127.0.0.1:0");
+                    let client = if source == "offline" {
+                        client.with_network_mode(aube_registry::NetworkMode::Offline)
+                    } else {
+                        client
+                    };
+                    let mut resolver = Resolver::new(Arc::new(client))
+                        .with_auto_install_peers(auto_install)
+                        .with_dedupe_peer_dependents(dedupe);
+                    if provider == "removed-ignored-ancestor" {
+                        resolver
+                            .ignored_optional_dependencies
+                            .insert("holder".into());
+                    }
+                    if provider == "removed-vulnerable-ancestor" {
+                        resolver = resolver.with_vulnerable_ranges(BTreeMap::from([(
+                            "holder".into(),
+                            vec!["*".into()],
+                        )]));
+                    }
+                    let mut host = make_packument("host", &["1.0.0"], "1.0.0");
+                    let meta = host.versions.get_mut("1.0.0").unwrap();
+                    let peer_range = if provider == "independent" {
+                        "^2"
+                    } else {
+                        "^1"
+                    };
+                    meta.peer_dependencies
+                        .insert("peer".into(), peer_range.into());
+                    meta.peer_dependencies_meta
+                        .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
+                    // Keep declarations for removal/filtering; the unchanged
+                    // offline case must also work without cached packuments.
+                    if source == "online" || provider != "optional-only" {
+                        resolver.cache.insert("host".into(), host.into());
+                    }
+                    resolver.cache.insert(
+                        "unrelated".into(),
+                        make_packument("unrelated", &["1.0.0"], "1.0.0").into(),
+                    );
+                    let mut manifest = PackageJson::default();
+                    manifest.dependencies.insert("host".into(), "^1".into());
+                    manifest
+                        .dependencies
+                        .insert("unrelated".into(), "1.0.0".into());
+                    if matches!(provider, "independent" | "independent-new-direct") {
+                        manifest.dependencies.insert("holder".into(), "^1".into());
+                    }
+                    let replacement = if provider.ends_with("in-range") {
+                        "1.1.0"
+                    } else {
+                        "2.0.0"
+                    };
+                    let new_direct =
+                        provider.starts_with("new-direct") || provider == "independent-new-direct";
+                    let new_ancestor = provider.starts_with("new-ancestor");
+                    if new_direct || new_ancestor {
+                        resolver.cache.insert(
+                            "peer".into(),
+                            make_packument("peer", &[replacement], replacement).into(),
+                        );
+                        if new_direct {
+                            manifest
+                                .dependencies
+                                .insert("peer".into(), replacement.into());
+                        } else {
+                            manifest.dependencies.remove("host");
+                            manifest
+                                .dependencies
+                                .insert("ancestor".into(), "1.0.0".into());
+                            let mut ancestor = make_packument("ancestor", &["1.0.0"], "1.0.0");
+                            let deps =
+                                &mut ancestor.versions.get_mut("1.0.0").unwrap().dependencies;
+                            deps.insert("host".into(), "^1".into());
+                            deps.insert("peer".into(), replacement.into());
+                            resolver.cache.insert("ancestor".into(), ancestor.into());
+                        }
+                    }
+                    if provider == "removed-consumer" {
+                        manifest.dependencies.remove("host");
+                    }
+                    let elsewhere = provider.starts_with("workspace-");
+                    let graph = if elsewhere {
+                        let old_deps = existing.importers.remove(".").unwrap();
+                        existing.importers.insert("member".into(), old_deps);
+                        resolver.cache.insert(
+                            "peer".into(),
+                            make_packument("peer", &[replacement], replacement).into(),
+                        );
+                        resolver.resolve_peers_from_workspace_root =
+                            !provider.starts_with("workspace-root-off");
+                        let mut supplying = PackageJson::default();
+                        supplying
+                            .dependencies
+                            .insert("peer".into(), replacement.into());
+                        let mut manifests = vec![("member".into(), manifest)];
+                        if provider.starts_with("workspace-other") {
+                            manifests.push(("other".into(), supplying));
+                            manifests.push((".".into(), PackageJson::default()));
+                        } else {
+                            manifests.push((".".into(), supplying));
+                        }
+                        resolver
+                            .resolve_workspace(
+                                &manifests,
+                                Some(&existing),
+                                &std::collections::HashMap::new(),
+                            )
+                            .await
+                            .unwrap()
+                    } else {
+                        resolver.resolve(&manifest, Some(&existing)).await.unwrap()
+                    };
+                    if provider == "removed-consumer" {
+                        for name in ["host", "peer", "child"] {
+                            assert!(!graph_has_package(&graph, name, "1.0.0"));
+                        }
+                        continue;
+                    }
+                    let kept = matches!(provider, "optional-only" | "independent")
+                        || elsewhere && replacement == "2.0.0";
+                    let old_provider_survives = kept || provider == "independent-new-direct";
+                    let host = graph
+                        .packages
+                        .values()
+                        .find(|pkg| pkg.name == "host")
+                        .unwrap();
+                    assert_eq!(
+                        host.dep_path.contains("(peer@1.0.0)"),
+                        kept,
+                        "{provider}, {source}, dedupe={dedupe}, auto={auto_install}"
+                    );
+                    assert_eq!(
+                        host.optional_dependencies.contains_key("peer"),
+                        kept || new_direct || new_ancestor || elsewhere
+                    );
+                    if new_direct || new_ancestor || elsewhere && !kept {
+                        assert_eq!(
+                            host.dependencies.get("peer").map(String::as_str),
+                            Some(replacement),
+                            "{provider}"
+                        );
+                        assert!(
+                            host.dep_path.contains(&format!("(peer@{replacement})")),
+                            "{provider}"
+                        );
+                    }
+                    assert_eq!(
+                        graph_has_package(&graph, "peer", "1.0.0"),
+                        old_provider_survives
+                    );
+                    assert_eq!(
+                        graph_has_package(&graph, "child", "1.0.0"),
+                        old_provider_survives
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn lockfile_reuse_optional_peer_refresh_preserves_transitive_pins() {
     let client = Arc::new(aube_registry::client::RegistryClient::new(
         "http://127.0.0.1:0",
