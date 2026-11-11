@@ -7756,8 +7756,17 @@ async fn primer_backed_resolve_yields_yarn_classic_shasum_fragment() {
 #[test]
 fn apply_peer_contexts_selects_prerelease_provider_for_in_range_base() {
     let react = mk_locked("react", "19.0.0-rc.1", &[], &[]);
-    let dom = mk_locked("react-dom", "19.0.0", &[], &[("react", "^19.0.0")]);
+    // react-dom carries its own stable react, so only a prerelease-aware
+    // ancestor match can pick the root's prerelease over it.
+    let stable = mk_locked("react", "19.0.0", &[], &[]);
+    let dom = mk_locked(
+        "react-dom",
+        "19.0.0",
+        &[("react", "19.0.0")],
+        &[("react", "^19.0.0")],
+    );
     let mut packages = BTreeMap::new();
+    packages.insert("react@19.0.0".to_string(), stable);
     packages.insert("react@19.0.0-rc.1".to_string(), react);
     packages.insert("react-dom@19.0.0".to_string(), dom);
     let importers = BTreeMap::from([(
