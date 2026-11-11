@@ -175,8 +175,9 @@ fn apply_trailing_whitespace_tolerant(
                 diffy::Line::Insert(_) => None,
             })
             .collect();
-        // An unterminated last file line may match a terminated hunk line
-        // only when nothing is appended after it, otherwise the appended text
+        // Only an unterminated last file line may match a terminated hunk
+        // line (never the reverse, which an explicit "No newline" marker
+        // forbids), and only when nothing is appended after it, otherwise the appended text
         // would be joined onto that line.
         let nothing_appended = !matches!(hunk.lines().last(), Some(diffy::Line::Insert(_)));
         let matches_at = |position: usize| {
@@ -194,6 +195,7 @@ fn apply_trailing_whitespace_tolerant(
                     file.trim_end() == want.trim_end()
                         && (file.ends_with('\n') == want.ends_with('\n')
                             || (nothing_appended
+                                && !file.ends_with('\n')
                                 && i + 1 == expected.len()
                                 && position + i + 1 == lines.len()))
                 })
@@ -717,6 +719,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.txt"), "old\n").unwrap();
         let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -18446744073709551615 +1 @@\n-old \n+new\n";
+        assert!(apply_multi_file_patch(dir.path(), patch).is_err());
+    }
+
+    #[test]
+    fn tolerant_apply_rejects_no_newline_marker_against_terminated_file_line() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "head \nend\n").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n head\n-end\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n";
         assert!(apply_multi_file_patch(dir.path(), patch).is_err());
     }
 
