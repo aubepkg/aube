@@ -158,7 +158,10 @@ fn apply_trailing_whitespace_tolerant(
     patch: &diffy::Patch<'_, str>,
 ) -> Option<String> {
     let lines: Vec<&str> = original.split_inclusive('\n').collect();
-    let trimmed = |line: &str| line.trim_end().to_string();
+    // Compare trailing-whitespace-insensitively, but keep whether the line is
+    // newline-terminated so an unterminated last line never matches (and then
+    // gets joined to appended text).
+    let trimmed = |line: &str| (line.trim_end().to_string(), line.ends_with('\n'));
     let mut out = String::with_capacity(original.len());
     let mut cursor = 0_usize;
     for hunk in patch.hunks() {
@@ -168,7 +171,7 @@ fn apply_trailing_whitespace_tolerant(
         } else {
             range.start().saturating_sub(1)
         };
-        let expected: Vec<String> = hunk
+        let expected: Vec<(String, bool)> = hunk
             .lines()
             .iter()
             .filter_map(|line| match line {
@@ -677,6 +680,14 @@ mod tests {
             std::fs::read(dir.path().join("a.txt")).unwrap(),
             b"head \nnew\nend\n"
         );
+    }
+
+    #[test]
+    fn tolerant_apply_does_not_join_unterminated_last_line_with_appended_text() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "old\nend").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,3 @@\n-old\n+new\n end\n+added\n";
+        assert!(apply_multi_file_patch(dir.path(), patch).is_err());
     }
 
     #[test]
