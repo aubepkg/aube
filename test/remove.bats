@@ -391,3 +391,59 @@ EOF
 	refute_output --partial '"is-odd"'
 	refute_output --partial '"is-even"'
 }
+
+@test "aube remove: workspace member keeps workspace dependency and writes no member lockfile" {
+	mkdir -p packages/app packages/local
+	printf '%s\n' '{"name":"root","private":true}' >package.json
+	printf 'packages:\n  - packages/*\n' >pnpm-workspace.yaml
+	printf '%s\n' '{"name":"local","version":"1.0.0"}' >packages/local/package.json
+	printf '%s\n' '{"name":"app","dependencies":{"local":"workspace:*","is-odd":"3.0.1"}}' >packages/app/package.json
+	run aube install --ignore-scripts
+	assert_success
+	cd packages/app
+	run aube remove is-odd --ignore-scripts
+	assert_success
+	assert_file_not_exists aube-lock.yaml
+	run grep -F 'is-odd' ../../aube-lock.yaml
+	assert_failure 1
+	run grep -F 'workspace:*' package.json
+	assert_success
+	run node -e 'require.resolve("local/package.json")'
+	assert_success
+}
+
+@test "aube remove: workspace member without workspace deps writes no member lockfile" {
+	mkdir -p packages/app
+	printf '%s\n' '{"name":"root","private":true}' >package.json
+	printf 'packages:\n  - packages/*\n' >pnpm-workspace.yaml
+	printf '%s\n' '{"name":"app","dependencies":{"is-odd":"3.0.1","is-number":"6.0.0"}}' >packages/app/package.json
+	run aube install --ignore-scripts
+	assert_success
+	cd packages/app
+	run aube remove is-odd --ignore-scripts
+	assert_success
+	assert_file_not_exists aube-lock.yaml
+	run grep -F 'is-odd' ../../aube-lock.yaml
+	assert_failure 1
+}
+
+@test "aube remove: workspace root removal keeps members' locked versions" {
+	mkdir -p packages/app
+	printf '%s\n' '{"name":"root","private":true,"dependencies":{"is-odd":"3.0.1"}}' >package.json
+	printf 'packages:\n  - packages/*\n' >pnpm-workspace.yaml
+	printf '%s\n' '{"name":"app","dependencies":{"is-number":"6.0.0"}}' >packages/app/package.json
+	run aube install --ignore-scripts
+	assert_success
+	# Widen the member's range so a re-resolve would move it off 6.0.0.
+	printf '%s\n' '{"name":"app","dependencies":{"is-number":">=6.0.0"}}' >packages/app/package.json
+	sed "s/specifier: 6.0.0/specifier: '>=6.0.0'/" aube-lock.yaml >aube-lock.yaml.tmp
+	mv aube-lock.yaml.tmp aube-lock.yaml
+	run aube remove is-odd --ignore-scripts
+	assert_success
+	run grep -F 'is-odd' aube-lock.yaml
+	assert_failure 1
+	run grep -F 'is-number@6.0.0' aube-lock.yaml
+	assert_success
+	run grep -F 'is-number@7.0.0' aube-lock.yaml
+	assert_failure 1
+}

@@ -31,6 +31,30 @@ pub(crate) fn load_graph(
     }
 }
 
+/// Read a shared workspace graph when cwd belongs to one of its importers.
+pub(crate) fn shared_workspace_graph(
+    cwd: &Path,
+) -> miette::Result<Option<(PathBuf, aube_lockfile::LockfileGraph)>> {
+    if crate::dirs::ignore_workspace() {
+        return Ok(None);
+    }
+    let Some(root) = crate::dirs::find_workspace_root(cwd) else {
+        return Ok(None);
+    };
+    if !super::with_settings_ctx(&root, aube_settings::resolved::shared_workspace_lockfile) {
+        return Ok(None);
+    }
+    let manifest = super::load_manifest_or_default(&root)?;
+    let Ok(graph) = super::parse_lockfile(&root, &manifest) else {
+        return Ok(None);
+    };
+    let importer = workspace_importer_path(&root, cwd)?;
+    if !graph.importers.contains_key(&importer) {
+        return Ok(None);
+    }
+    Ok(Some((root, graph)))
+}
+
 /// Collect the transitive dep-path closure reachable from the filtered
 /// root deps, keyed by dep_path for stable iteration. Used by audit,
 /// sbom, and anything else that needs "which packages would apply if

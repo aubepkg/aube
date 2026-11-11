@@ -110,7 +110,8 @@ pub async fn run(
     // Build and validate resolver configuration before persisting the
     // manifest mutation. A malformed policy must leave package.json and
     // the installed graph in their original, consistent state.
-    let existing = crate::commands::parse_lockfile(&cwd, &manifest).ok();
+    let shared_workspace = super::shared_workspace_graph(&cwd)?
+        .is_some_and(|(root, graph)| root != cwd || graph.importers.len() > 1);
     let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
     let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs.clone())?;
 
@@ -163,6 +164,20 @@ pub async fn run(
         eprintln!("  - {name}");
     }
     eprintln!("Updated package.json");
+
+    // In a shared-lockfile workspace the single-project resolve below cannot
+    // see sibling `workspace:` packages and would write a member lockfile or
+    // re-resolve other importers. Let the workspace install reconcile the
+    // root lockfile, preferring what is already locked.
+    if shared_workspace {
+        let mut options = install::InstallOptions::with_mode(super::chained_frozen_mode(
+            install::FrozenMode::Fix,
+        ));
+        options.ignore_scripts = args.ignore_scripts;
+        return install::run_with_project_lock(options, &lock).await;
+    }
+
+    let existing = crate::commands::parse_lockfile(&cwd, &manifest).ok();
 
     // Removing a direct dependency normally needs no registry work: trim
     // that importer's roots and garbage-collect packages that are no longer
