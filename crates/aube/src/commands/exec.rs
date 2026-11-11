@@ -416,8 +416,13 @@ fn find_on_path(cwd: &Path, bin: &str) -> Option<PathBuf> {
     let path_dirs = crate::runtime::user_command_path_entries(project_bin_dirs(cwd));
     let path = aube_scripts::prepend_paths(&path_dirs);
     std::env::split_paths(&path)
-        .filter(|dir| !dir.as_os_str().is_empty())
         .flat_map(|dir| {
+            // Relative and empty entries resolve against the child's cwd.
+            let dir = if dir.is_absolute() {
+                dir
+            } else {
+                cwd.join(dir)
+            };
             let plain = dir.join(bin);
             #[cfg(windows)]
             let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT".into());
@@ -481,7 +486,10 @@ pub(crate) fn build_bin_command(
         } else if !bin_path.exists() {
             // Not a project bin: the caller verified it resolves on PATH, and
             // the PATH set below is what the child lookup uses.
-            let mut cmd = tokio::process::Command::new(bin);
+            // Launch the resolved file so Windows `.cmd`/`.bat` matches and
+            // cwd-relative PATH entries run exactly what was checked.
+            let program = find_on_path(cwd, bin).unwrap_or_else(|| PathBuf::from(bin));
+            let mut cmd = tokio::process::Command::new(program);
             cmd.args(args);
             cmd
         } else {
@@ -785,7 +793,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let missing = tmp.path().join("node_modules/.bin/sh");
         let command = build_bin_command(tmp.path(), &missing, "sh", &[], &[], false);
-        assert_eq!(command.as_std().get_program(), "sh");
+        let program = std::path::Path::new(command.as_std().get_program());
+        assert!(program.is_absolute(), "{program:?}");
+        assert_eq!(program.file_name().unwrap(), "sh");
     }
 
     #[cfg(unix)]

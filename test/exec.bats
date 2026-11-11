@@ -293,14 +293,21 @@ EOF
 	run aube install
 	assert_success
 
-	run aube -r exec --no-install ls package.json
+	# shellcheck disable=SC2016
+	run aube -r exec --no-install -- sh -c 'echo "ran-in-$(basename "$PWD")"'
 	assert_success
-	assert_output --partial "package.json"
+	assert_output --partial "ran-in-a"
+	assert_output --partial "ran-in-b"
 
-	run aube -r exec --parallel --no-install ls package.json
+	# shellcheck disable=SC2016
+	run aube -r exec --parallel --no-install -- sh -c 'echo "ran-in-$(basename "$PWD")"'
 	assert_success
-	assert_output --partial "package.json"
+	assert_output --partial "ran-in-a"
+	assert_output --partial "ran-in-b"
 
-	run aube --filter a exec --no-install ls package.json
+	# shellcheck disable=SC2016
+	run aube --filter a exec --no-install -- sh -c 'echo "ran-in-$(basename "$PWD")"'
 	assert_success
+	assert_output --partial "ran-in-a"
+	refute_output --partial "ran-in-b"
 }
