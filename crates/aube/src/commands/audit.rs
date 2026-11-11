@@ -181,9 +181,16 @@ pub async fn run(args: AuditArgs) -> miette::Result<Option<i32>> {
     // Packages with a non-registry source (workspace, `link:`, `file:`,
     // portal, exec, git, tarball URL) are left out, as pnpm does: sending
     // them would leak private names and match same-named public advisories.
+    // A tarball URL on the `.npmrc` registry (not an audit-only
+    // `--registry` override) stays in: pnpm records it as a registry package.
+    let npm_config = aube_registry::config::NpmConfig::load(&cwd);
     let mut pkg_versions: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for pkg in closure.values() {
-        if pkg.local_source.is_some() {
+        if pkg
+            .local_source
+            .as_ref()
+            .is_some_and(|source| !is_registry_tarball(source, pkg, &npm_config))
+        {
             continue;
         }
         let entry = pkg_versions.entry(pkg.name.clone()).or_default();
@@ -409,6 +416,25 @@ fn render_fix_remaining(selected: &[Row], remaining: &[Row]) {
             eprintln!("- ({}) \"{}\" {}", row.severity, row.title, row.name);
         }
     }
+}
+
+/// Whether `source` is a tarball URL in the package's registry, in the
+/// `<registry>/<name>/-/<basename>-<version>.tgz` layout. pnpm records
+/// such a dependency as a registry package, so it is audited like one.
+fn is_registry_tarball(
+    source: &aube_lockfile::LocalSource,
+    pkg: &aube_lockfile::LockedPackage,
+    npm_config: &aube_registry::config::NpmConfig,
+) -> bool {
+    let aube_lockfile::LocalSource::RemoteTarball(tarball) = source else {
+        return false;
+    };
+    tarball.url.starts_with(npm_config.registry_for(&pkg.name))
+        && !aube_lockfile::pnpm::registry_tarball_url_is_not_derivable(
+            &pkg.name,
+            &pkg.version,
+            Some(&tarball.url),
+        )
 }
 
 /// Construct the registry client, optionally pointing the default

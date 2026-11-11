@@ -671,3 +671,60 @@ _write_audit_update_exact_fixture() {
 	refute_output --partial "git-dep"
 	refute_output --partial "url-dep"
 }
+
+@test "aube audit sends a registry-hosted tarball dependency under its package name" {
+	_start_audit_server
+	port="$(cat audit-server-port)"
+	echo "registry=http://127.0.0.1:${port}/" >.npmrc
+	cat >package.json <<-'EOF'
+		{
+		  "name": "audit-fixture",
+		  "version": "1.0.0",
+		  "dependencies": {
+		    "wrap": "file:./vendor/wrap"
+		  }
+		}
+	EOF
+	tarball="http://127.0.0.1:${port}/is-number/-/is-number-7.0.0.tgz"
+	cat >aube-lock.yaml <<-EOF
+		lockfileVersion: '9.0'
+
+		settings:
+		  autoInstallPeers: true
+		  excludeLinksFromLockfile: false
+
+		importers:
+		  .:
+		    dependencies:
+		      wrap:
+		        specifier: file:./vendor/wrap
+		        version: file:./vendor/wrap
+
+		packages:
+		  is-number@${tarball}:
+		    resolution: {integrity: sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==, tarball: ${tarball}}
+		    version: 7.0.0
+		  url-dep@https://example.test/url-dep-1.0.0.tgz:
+		    resolution: {integrity: sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==, tarball: https://example.test/url-dep-1.0.0.tgz}
+		    version: 1.0.0
+		  wrap@file:./vendor/wrap:
+		    resolution: {directory: ./vendor/wrap, type: directory}
+
+		snapshots:
+		  is-number@${tarball}: {}
+		  url-dep@https://example.test/url-dep-1.0.0.tgz: {}
+		  wrap@file:./vendor/wrap:
+		    dependencies:
+		      is-number: ${tarball}
+		      url-dep: https://example.test/url-dep-1.0.0.tgz
+	EOF
+
+	run aube audit
+	_stop_audit_server
+	assert_output --partial "number-high"
+
+	run cat audit-request.json
+	assert_output --partial '"is-number":["7.0.0"]'
+	refute_output --partial "url-dep"
+	refute_output --partial "wrap"
+}
