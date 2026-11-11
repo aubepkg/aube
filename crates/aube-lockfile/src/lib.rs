@@ -39,6 +39,10 @@ pub(crate) const EXTRA_YARN_RESOLVED: &str = "__aube_yarn_resolved";
 /// Internal `extra_meta` key holding the registry's hex `dist.shasum`, which
 /// the yarn v1 writer appends to a new entry's `resolved` URL as `#<sha1>`.
 pub const EXTRA_REGISTRY_SHASUM: &str = "__aube_registry_shasum";
+/// Internal `extra_meta` marker on a `link:` package read from a lockfile,
+/// whose `version` is a `0.0.0` placeholder because the lockfile does not
+/// record the target manifest's version. Writers never emit it.
+pub const EXTRA_UNKNOWN_VERSION: &str = "__aube_unknown_version";
 /// Internal `extra_meta` marker behind
 /// [`LockedPackage::declared_dependencies_known`]. Writers never emit it.
 pub(crate) const EXTRA_DECLARED_DEPENDENCIES_KNOWN: &str = "__aube_declared_dependencies_known";
