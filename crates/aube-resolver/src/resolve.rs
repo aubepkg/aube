@@ -131,6 +131,7 @@ impl Resolver {
     /// peers when `auto_install_peers` is on, and applies peer-context
     /// suffixes. Returns the post-peer-context graph ready for lockfile
     /// emission.
+    #[allow(clippy::too_many_arguments)]
     fn finalize_resolved_graph(
         &self,
         importers: BTreeMap<String, Vec<DirectDep>>,
