@@ -43,6 +43,8 @@ pub(crate) struct ResolveDriver<'a> {
     resolver: &'a mut Resolver,
     existing: Option<&'a LockfileGraph>,
     workspace_packages: &'a HashMap<String, String>,
+    /// Workspace member name → importer path, for peer wiring.
+    workspace_links: BTreeMap<String, String>,
 
     /// Borrowed set of names present in the existing lockfile. Used as
     /// a prefetch gate so packuments that will hit the lockfile-reuse
@@ -242,10 +244,22 @@ impl<'a> ResolveDriver<'a> {
             .unwrap_or_default();
         let locked_index = LockedIndex::new(existing);
 
+        let workspace_links: BTreeMap<String, String> = manifests
+            .iter()
+            .filter(|(path, _)| path != ".")
+            .filter_map(|(path, manifest)| {
+                let name = manifest.name.as_ref()?;
+                workspace_packages
+                    .contains_key(name)
+                    .then(|| (name.clone(), path.clone()))
+            })
+            .collect();
+
         Self {
             resolver,
             existing,
             workspace_packages,
+            workspace_links,
             existing_names,
             locked_index,
             importer_declared_dep_names,
@@ -319,6 +333,7 @@ impl<'a> ResolveDriver<'a> {
             self.resolved_times,
             self.skipped_optional_dependencies,
             self.catalog_picks,
+            self.workspace_links,
         )?;
         if let Some((state, sem)) = self.packument_persist_handle {
             sem.persist(&state, "packument:default");
@@ -2537,7 +2552,8 @@ impl<'a> ResolveDriver<'a> {
                 // its declared range, and peers nothing else supplies keep
                 // resolving.
                 if locked_pkg.peer_dependencies.contains_key(dep_name)
-                    && is_non_registry_specifier(&canonical_version)
+                    && (is_non_registry_specifier(&canonical_version)
+                        || canonical_version.starts_with("link+"))
                     && (task.ancestors.iter().any(|(name, _)| name == dep_name)
                         || self
                             .importer_declared_dep_names
