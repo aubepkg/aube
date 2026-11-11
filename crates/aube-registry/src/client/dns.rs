@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
+use tokio::sync::Semaphore;
 
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::LookupIpStrategy;
@@ -26,16 +27,24 @@ const MAX_HICKORY_DEADLINE: Duration = Duration::from_secs(3);
 
 #[derive(Default)]
 struct State {
-    /// Built lazily: construction needs a tokio runtime in some setups.
+    /// Built lazily, per client, so each new client picks up the current
+    /// nameserver list (VPNs come and go during a long-lived process).
     hickory: OnceLock<Option<TokioResolver>>,
     /// Set once hickory times out; later lookups go straight to the OS.
-    use_system: AtomicBool,
+    /// Shared by every client in the process, so a dead nameserver is
+    /// discovered once rather than once per metadata / tarball /
+    /// per-registry client.
+    use_system: Arc<AtomicBool>,
 }
 
-/// Shared by every client in the process, so a dead nameserver is
-/// discovered once rather than once per metadata / tarball / per-registry
-/// client.
-static SHARED: LazyLock<Arc<State>> = LazyLock::new(Arc::default);
+static USE_SYSTEM: LazyLock<Arc<AtomicBool>> = LazyLock::new(Arc::default);
+
+/// `getaddrinfo` cannot be cancelled, so a stalled lookup keeps its
+/// blocking thread. Cap how many may be in flight so they can never
+/// exhaust the blocking pool that install work shares.
+const MAX_SYSTEM_LOOKUPS: usize = 8;
+static SYSTEM_LOOKUPS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(MAX_SYSTEM_LOOKUPS)));
 
 #[derive(Clone)]
 pub(super) struct FallbackResolver {
@@ -49,7 +58,10 @@ impl FallbackResolver {
     /// before the request itself is cut off.
     pub(super) fn shared(fetch_timeout: Duration) -> Self {
         Self {
-            state: SHARED.clone(),
+            state: Arc::new(State {
+                use_system: USE_SYSTEM.clone(),
+                ..State::default()
+            }),
             deadline: MAX_HICKORY_DEADLINE.min(fetch_timeout / 2),
         }
     }
@@ -78,7 +90,21 @@ impl State {
 }
 
 async fn system_lookup(host: &str) -> Result<Vec<SocketAddr>, std::io::Error> {
-    Ok(tokio::net::lookup_host((host, 0)).await?.collect())
+    let permit = SYSTEM_LOOKUPS
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(std::io::Error::other)?;
+    let host = host.to_owned();
+    // The permit moves into the blocking closure, so the slot stays taken
+    // until `getaddrinfo` actually returns, even if this future is
+    // dropped by a request timeout.
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 0)).map(Iterator::collect)
+    })
+    .await
+    .map_err(std::io::Error::other)?
 }
 
 /// Try `primary` within `deadline`, otherwise use `fallback`. A timeout
@@ -191,6 +217,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(got, vec![SocketAddr::new(ip, 0)]);
+    }
+
+    #[tokio::test]
+    async fn system_lookup_resolves_localhost() {
+        let addrs = system_lookup("localhost").await.unwrap();
+        assert!(addrs.iter().any(|a| a.ip().is_loopback()));
     }
 
     #[test]
