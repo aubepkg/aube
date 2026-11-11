@@ -410,6 +410,9 @@ impl LockfileGraph {
         if kind != crate::LockfileKind::Pnpm {
             return DriftStatus::Fresh;
         }
+        // `lockfileIncludeTarballUrl` is deliberately not compared: only the
+        // install write path populates the per-package URLs it implies, so
+        // other writers (remove, update) would reject their own output.
         let modeled = [
             (
                 "autoInstallPeers",
@@ -420,11 +423,6 @@ impl LockfileGraph {
                 "excludeLinksFromLockfile",
                 self.settings.exclude_links_from_lockfile,
                 expected.exclude_links_from_lockfile,
-            ),
-            (
-                "lockfileIncludeTarballUrl",
-                self.settings.lockfile_include_tarball_url,
-                expected.lockfile_include_tarball_url,
             ),
         ];
         for (key, locked, wanted) in modeled {
@@ -2655,12 +2653,6 @@ mod settings_drift_tests {
 
     #[test]
     fn modeled_setting_change_marks_pnpm_lockfile_stale() {
-        let mut expected = expected_with(&[]);
-        expected.lockfile_include_tarball_url = true;
-        assert!(matches!(
-            graph_with(&[]).check_settings_drift(&expected, LockfileKind::Pnpm),
-            DriftStatus::Stale { .. }
-        ));
         let mut expected = expected_with(&[]);
         expected.auto_install_peers = false;
         assert!(matches!(
