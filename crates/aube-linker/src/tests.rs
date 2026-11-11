@@ -1708,7 +1708,8 @@ fn test_concurrent_projects_share_gvs_hidden_hoist_without_collision() {
                     std::fs::create_dir_all(&project).unwrap();
                     let (store, indices, graph, barrier) = (&store, &indices, &graph, &barrier);
                     s.spawn(move || {
-                        let linker = Linker::new_with_gvs(store, LinkStrategy::Copy, true);
+                        let linker = Linker::new_with_gvs(store, LinkStrategy::Copy, true)
+                            .with_link_concurrency(Some(threads));
                         barrier.wait();
                         linker.link_all(&project, graph, indices).map(|_| ())
                     })
