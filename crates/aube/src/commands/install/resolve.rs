@@ -197,7 +197,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
                             && matches!(g.check_catalogs_drift(workspace_catalogs), DriftStatus::Fresh)
                             && matches!(
                                 g.check_settings_drift(
-                                    &super::settings::resolve_lockfile_settings_extra(settings_ctx),
+                                    &super::settings::resolve_lockfile_settings(settings_ctx),
                                     k,
                                 ),
                                 DriftStatus::Fresh
@@ -421,7 +421,7 @@ pub(super) struct SelectLockfileInput<'a> {
     pub workspace_catalogs: &'a crate::commands::CatalogMap,
     pub is_workspace_project: bool,
     pub lockfile_pre_parse: Option<&'a (LockfileGraph, LockfileKind)>,
-    pub lockfile_settings_extra: &'a std::collections::BTreeMap<String, serde_json::Value>,
+    pub lockfile_settings: &'a aube_lockfile::LockfileSettings,
 }
 
 pub(super) fn select_lockfile_result(
@@ -441,7 +441,7 @@ pub(super) fn select_lockfile_result(
         workspace_catalogs,
         is_workspace_project,
         lockfile_pre_parse,
-        lockfile_settings_extra,
+        lockfile_settings,
     } = input;
     if !lockfile_enabled {
         tracing::debug!("lockfile=false: skipping lockfile parse, re-resolving");
@@ -489,7 +489,7 @@ pub(super) fn select_lockfile_result(
                     ));
                 }
                 if let DriftStatus::Stale { reason } =
-                    graph.check_settings_drift(lockfile_settings_extra, kind)
+                    graph.check_settings_drift(lockfile_settings, kind)
                 {
                     return Err(miette!(
                         code = aube_codes::errors::ERR_AUBE_LOCKFILE_CONFIG_MISMATCH,
@@ -541,7 +541,7 @@ pub(super) fn select_lockfile_result(
                         );
                         Ok(Err(aube_lockfile::Error::NotFound(cwd.to_path_buf())))
                     } else if let DriftStatus::Stale { reason } =
-                        graph.check_settings_drift(lockfile_settings_extra, *kind)
+                        graph.check_settings_drift(lockfile_settings, *kind)
                     {
                         tracing::debug!(
                             "Lockfile out of date with lockfile settings ({reason}), re-resolving..."

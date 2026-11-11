@@ -404,14 +404,38 @@ impl LockfileGraph {
     /// settings and are always fresh.
     pub fn check_settings_drift(
         &self,
-        expected: &BTreeMap<String, serde_json::Value>,
+        expected: &crate::LockfileSettings,
         kind: crate::LockfileKind,
     ) -> DriftStatus {
         if kind != crate::LockfileKind::Pnpm {
             return DriftStatus::Fresh;
         }
+        let modeled = [
+            (
+                "autoInstallPeers",
+                self.settings.auto_install_peers,
+                expected.auto_install_peers,
+            ),
+            (
+                "excludeLinksFromLockfile",
+                self.settings.exclude_links_from_lockfile,
+                expected.exclude_links_from_lockfile,
+            ),
+            (
+                "lockfileIncludeTarballUrl",
+                self.settings.lockfile_include_tarball_url,
+                expected.lockfile_include_tarball_url,
+            ),
+        ];
+        for (key, locked, wanted) in modeled {
+            if locked != wanted {
+                return DriftStatus::Stale {
+                    reason: format!("settings.{key}: config says {wanted}, lockfile says {locked}"),
+                };
+            }
+        }
         for key in crate::DERIVED_PNPM_SETTING_KEYS {
-            let (locked, wanted) = (self.settings.extra.get(*key), expected.get(*key));
+            let (locked, wanted) = (self.settings.extra.get(*key), expected.extra.get(*key));
             if locked != wanted {
                 return DriftStatus::Stale {
                     reason: format!(
@@ -2625,9 +2649,29 @@ mod settings_drift_tests {
         graph
     }
 
+    fn expected_with(extra: &[(&str, serde_json::Value)]) -> crate::LockfileSettings {
+        graph_with(extra).settings
+    }
+
+    #[test]
+    fn modeled_setting_change_marks_pnpm_lockfile_stale() {
+        let mut expected = expected_with(&[]);
+        expected.lockfile_include_tarball_url = true;
+        assert!(matches!(
+            graph_with(&[]).check_settings_drift(&expected, LockfileKind::Pnpm),
+            DriftStatus::Stale { .. }
+        ));
+        let mut expected = expected_with(&[]);
+        expected.auto_install_peers = false;
+        assert!(matches!(
+            graph_with(&[]).check_settings_drift(&expected, LockfileKind::Pnpm),
+            DriftStatus::Stale { .. }
+        ));
+    }
+
     #[test]
     fn config_change_marks_pnpm_lockfile_stale() {
-        let expected = BTreeMap::from([("dedupePeers".to_string(), serde_json::json!(true))]);
+        let expected = expected_with(&[("dedupePeers", serde_json::json!(true))]);
         let locked = graph_with(&[]);
         assert!(matches!(
             locked.check_settings_drift(&expected, LockfileKind::Pnpm),
@@ -2640,21 +2684,21 @@ mod settings_drift_tests {
         );
         // Reset to default: the lockfile still records it, config no longer does.
         assert!(matches!(
-            matching.check_settings_drift(&BTreeMap::new(), LockfileKind::Pnpm),
+            matching.check_settings_drift(&expected_with(&[]), LockfileKind::Pnpm),
             DriftStatus::Stale { .. }
         ));
     }
 
     #[test]
     fn other_formats_and_unknown_keys_never_drift() {
-        let expected = BTreeMap::from([("dedupePeers".to_string(), serde_json::json!(true))]);
+        let expected = expected_with(&[("dedupePeers", serde_json::json!(true))]);
         assert_eq!(
             graph_with(&[]).check_settings_drift(&expected, LockfileKind::Aube),
             DriftStatus::Fresh
         );
         let unknown = graph_with(&[("futureSetting", serde_json::json!(1))]);
         assert_eq!(
-            unknown.check_settings_drift(&BTreeMap::new(), LockfileKind::Pnpm),
+            unknown.check_settings_drift(&expected_with(&[]), LockfileKind::Pnpm),
             DriftStatus::Fresh
         );
     }

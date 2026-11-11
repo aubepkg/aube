@@ -580,6 +580,19 @@ pub(crate) fn resolve_lockfile_settings_extra(
     out
 }
 
+/// The full `settings:` header the current config implies, for comparing
+/// against what a lockfile recorded.
+pub(crate) fn resolve_lockfile_settings(
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> aube_lockfile::LockfileSettings {
+    aube_lockfile::LockfileSettings {
+        auto_install_peers: aube_settings::resolved::auto_install_peers(ctx),
+        exclude_links_from_lockfile: aube_settings::resolved::exclude_links_from_lockfile(ctx),
+        lockfile_include_tarball_url: aube_settings::resolved::lockfile_include_tarball_url(ctx),
+        extra: resolve_lockfile_settings_extra(ctx),
+    }
+}
+
 /// Resolve `resolvePeersFromWorkspaceRoot` from `.npmrc` / workspace
 /// yaml. When true (pnpm's default), unresolved peers fall back to
 /// the root importer's direct deps before the graph-wide scan.

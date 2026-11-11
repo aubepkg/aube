@@ -198,7 +198,7 @@ pub async fn run(
                 )
                 && matches!(
                     graph.check_settings_drift(
-                        &super::with_settings_ctx(&cwd, install::resolve_lockfile_settings_extra,),
+                        &super::with_settings_ctx(&cwd, install::resolve_lockfile_settings,),
                         lockfile_kind,
                     ),
                     aube_lockfile::DriftStatus::Fresh
