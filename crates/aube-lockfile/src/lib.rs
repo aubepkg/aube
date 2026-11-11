@@ -291,6 +291,11 @@ pub struct LockfileSettings {
     /// `settings:` header so it survives parse/write cycles without
     /// re-reading `.npmrc`.
     pub lockfile_include_tarball_url: bool,
+    /// Every other `settings:` entry (`dedupePeers`,
+    /// `injectWorkspacePackages`, `peersSuffixMaxLength`, …). Fresh
+    /// resolves fill this from the current configuration; a parsed
+    /// pnpm lockfile carries whatever the file recorded.
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 impl Default for LockfileSettings {
@@ -299,9 +304,24 @@ impl Default for LockfileSettings {
             auto_install_peers: true,
             exclude_links_from_lockfile: false,
             lockfile_include_tarball_url: false,
+            extra: BTreeMap::new(),
         }
     }
 }
+
+/// `settings:` keys aube derives from the current configuration on every
+/// resolve. The pnpm writer never copies these from the lockfile being
+/// replaced, so a config change (or reset to default) is reflected.
+pub const DERIVED_PNPM_SETTING_KEYS: &[&str] = &[
+    "addMissingPeerTypes",
+    "autoDedupe",
+    "dedupeInjectedDeps",
+    "dedupePeerDependents",
+    "dedupePeers",
+    "injectWorkspacePackages",
+    "linkWorkspacePackages",
+    "peersSuffixMaxLength",
+];
 
 /// A direct dependency of a workspace importer.
 #[derive(Debug, Clone)]

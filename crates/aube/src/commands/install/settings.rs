@@ -512,6 +512,87 @@ pub(super) fn resolve_dedupe_peers(ctx: &aube_settings::ResolveCtx<'_>) -> bool 
     aube_settings::resolved::dedupe_peers(ctx)
 }
 
+/// pnpm's default `peersSuffixMaxLength`, omitted from `settings:` when unchanged.
+const DEFAULT_PEERS_SUFFIX_MAX_LENGTH: u64 = 1000;
+
+/// Whether pnpm's `lockfile.includeResolutionSettings` is on. pnpm reads it
+/// from the nested `lockfile:` map of `pnpm-workspace.yaml`.
+fn include_resolution_settings(ctx: &aube_settings::ResolveCtx<'_>) -> bool {
+    ctx.workspace_yaml
+        .get("lockfile")
+        .and_then(|v| v.get("includeResolutionSettings"))
+        .and_then(yaml_serde::Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// The `settings:` header entries pnpm records beyond `autoInstallPeers`
+/// and `excludeLinksFromLockfile`, derived from the current configuration.
+/// Each key appears only where pnpm 12 writes it: boolean opt-ins and a
+/// nondefault `peersSuffixMaxLength` when set, and the resolution settings
+/// snapshot (always, with defaults) under
+/// `lockfile.includeResolutionSettings`. pnpm compares these on a frozen
+/// install, so a stale or missing entry makes it fail with
+/// `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`.
+pub(crate) fn resolve_lockfile_settings_extra(
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> std::collections::BTreeMap<String, serde_json::Value> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut flag = |key: &str, value: bool| {
+        if value {
+            out.insert(key.to_string(), serde_json::Value::Bool(true));
+        }
+    };
+    flag(
+        "addMissingPeerTypes",
+        aube_settings::resolved::add_missing_peer_types(ctx),
+    );
+    flag("dedupePeers", aube_settings::resolved::dedupe_peers(ctx));
+    flag(
+        "injectWorkspacePackages",
+        aube_settings::resolved::inject_workspace_packages(ctx),
+    );
+    let max_length = aube_settings::resolved::peers_suffix_max_length(ctx);
+    if max_length != DEFAULT_PEERS_SUFFIX_MAX_LENGTH {
+        out.insert("peersSuffixMaxLength".into(), max_length.into());
+    }
+    if include_resolution_settings(ctx) {
+        out.insert(
+            "autoDedupe".into(),
+            aube_settings::resolved::auto_dedupe(ctx).into(),
+        );
+        out.insert(
+            "dedupeInjectedDeps".into(),
+            aube_settings::resolved::dedupe_injected_deps(ctx).into(),
+        );
+        out.insert(
+            "dedupePeerDependents".into(),
+            aube_settings::resolved::dedupe_peer_dependents(ctx).into(),
+        );
+        out.insert(
+            "linkWorkspacePackages".into(),
+            match aube_settings::resolved::link_workspace_packages(ctx) {
+                aube_settings::resolved::LinkWorkspacePackages::True => true.into(),
+                aube_settings::resolved::LinkWorkspacePackages::False => false.into(),
+                aube_settings::resolved::LinkWorkspacePackages::Deep => "deep".into(),
+            },
+        );
+    }
+    out
+}
+
+/// The full `settings:` header the current config implies, for comparing
+/// against what a lockfile recorded.
+pub(crate) fn resolve_lockfile_settings(
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> aube_lockfile::LockfileSettings {
+    aube_lockfile::LockfileSettings {
+        auto_install_peers: aube_settings::resolved::auto_install_peers(ctx),
+        exclude_links_from_lockfile: aube_settings::resolved::exclude_links_from_lockfile(ctx),
+        lockfile_include_tarball_url: aube_settings::resolved::lockfile_include_tarball_url(ctx),
+        extra: resolve_lockfile_settings_extra(ctx),
+    }
+}
+
 /// Resolve `resolvePeersFromWorkspaceRoot` from `.npmrc` / workspace
 /// yaml. When true (pnpm's default), unresolved peers fall back to
 /// the root importer's direct deps before the graph-wide scan.
@@ -1292,6 +1373,7 @@ pub(crate) fn configure_resolver(
         .with_auto_install_peers(auto_install_peers)
         .with_peers_suffix_max_length(peers_suffix_max_length)
         .with_exclude_links_from_lockfile(exclude_links_from_lockfile)
+        .with_lockfile_settings_extra(resolve_lockfile_settings_extra(settings_ctx))
         .with_dedupe_peer_dependents(dedupe_peer_dependents)
         .with_dedupe_peers(dedupe_peers)
         .with_resolve_peers_from_workspace_root(resolve_peers_from_workspace_root_opt)
@@ -1908,5 +1990,58 @@ mod finalize_lockfile_graph_tests {
             ignored.pnpmfile_checksum.is_none(),
             "--ignore-pnpmfile must not record a pnpmfile checksum"
         );
+    }
+}
+
+#[cfg(test)]
+mod lockfile_settings_extra_tests {
+    use super::*;
+
+    fn extra(npmrc: &[(&str, &str)], workspace_yaml: &str) -> BTreeMap<String, serde_json::Value> {
+        let npmrc: Vec<(String, String)> = npmrc
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let ws: BTreeMap<String, yaml_serde::Value> = yaml_serde::from_str(workspace_yaml).unwrap();
+        resolve_lockfile_settings_extra(&aube_settings::ResolveCtx::files_only(&npmrc, &ws))
+    }
+
+    #[test]
+    fn defaults_add_nothing() {
+        assert!(extra(&[], "{}").is_empty());
+        assert!(extra(&[], "dedupePeers: false\npeersSuffixMaxLength: 1000\n").is_empty());
+    }
+
+    #[test]
+    fn opt_ins_and_nondefault_suffix_length_are_recorded() {
+        let got = extra(
+            &[("dedupe-peers", "true")],
+            "injectWorkspacePackages: true\naddMissingPeerTypes: true\npeersSuffixMaxLength: 80\n",
+        );
+        let keys: Vec<_> = got.keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            [
+                "addMissingPeerTypes",
+                "dedupePeers",
+                "injectWorkspacePackages",
+                "peersSuffixMaxLength"
+            ]
+        );
+        assert_eq!(got["peersSuffixMaxLength"], 80);
+    }
+
+    #[test]
+    fn resolution_snapshot_requires_the_nested_opt_in() {
+        let off = extra(&[], "linkWorkspacePackages: deep\nautoDedupe: true\n");
+        assert!(off.is_empty());
+        let on = extra(
+            &[],
+            "lockfile:\n  includeResolutionSettings: true\nlinkWorkspacePackages: deep\n",
+        );
+        assert_eq!(on["autoDedupe"], false);
+        assert_eq!(on["dedupeInjectedDeps"], true);
+        assert_eq!(on["dedupePeerDependents"], true);
+        assert_eq!(on["linkWorkspacePackages"], "deep");
     }
 }

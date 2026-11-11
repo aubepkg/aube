@@ -69,6 +69,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
@@ -83,7 +84,22 @@ jobs:
           JACTIONLINT_ONLINE: 1
           GITHUB_TOKEN: ${{ github.token }}
       - run: cargo-machete
-      - run: mise x -- cargo-deny --locked check advisories bans licenses sources
+      - run: mise x -- cargo-deny --locked check bans licenses sources
+      # The RustSec advisory DB changes independently of this repo, so PRs only
+      # check advisories when they touch the dependency graph. The daily
+      # deny-advisories workflow reports new advisories against main otherwise.
+      - name: cargo-deny advisories
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ] \
+            && ! git diff --name-only "$BASE_SHA...HEAD" | grep -qE '(^|/)(Cargo\.lock|Cargo\.toml|deny\.toml)$'; then
+            echo "No dependency changes; skipping advisories (checked daily on main)."
+            exit 0
+          fi
+          rm -rf ~/.cargo/advisory-dbs
+          mise x -- cargo-deny --locked check advisories
       - run: mise exec -- cargo msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
       - run: mise run render
       - name: assert render produces no diff
