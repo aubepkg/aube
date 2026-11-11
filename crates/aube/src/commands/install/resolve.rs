@@ -758,6 +758,7 @@ pub(crate) fn lockfile_peer_context_options(
             settings_ctx,
         ),
         peers_suffix_max_length: super::settings::resolve_peers_suffix_max_length(settings_ctx),
+        workspace_links: Default::default(),
     }
 }
 

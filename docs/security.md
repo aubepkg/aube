@@ -166,6 +166,11 @@ structured metadata shapes npm emits after registry-side checks:
    --provenance` (`dist.attestations.provenance.predicateType` with an SLSA
    provenance URI).
 
+Moving from staged publish approval to a trusted publisher with provenance is
+not a downgrade: staged publishing needs a human to approve every release, so
+maintainers who automate releases have to switch to trusted publishing. Any
+other drop in tier still fails.
+
 This install-time policy validates the registry metadata shape; it does not
 cryptographically verify the attached attestation bundle.
 
