@@ -107,7 +107,14 @@ pub fn detect_unmet_peers(graph: &LockfileGraph) -> Vec<UnmetPeer> {
             };
 
             let satisfied = match &found_version {
-                Some(_) if local_provider.is_some_and(|p| p.version == "0.0.0") => true,
+                Some(_)
+                    if local_provider.is_some_and(|p| {
+                        p.extra_meta
+                            .contains_key(aube_lockfile::EXTRA_UNKNOWN_VERSION)
+                    }) =>
+                {
+                    true
+                }
                 Some(v) => peer_version_satisfies(v, declared_range),
                 None => false,
             };
@@ -959,29 +966,6 @@ struct PeerProvider {
 fn add_workspace_link_packages(graph: &mut LockfileGraph, links: &BTreeMap<String, String>) {
     if links.is_empty() {
         return;
-    }
-    // A lockfile read from before the member moved still carries a link
-    // package for its old directory; drop it so peers rewire to the new one.
-    let direct: BTreeSet<&str> = graph
-        .importers
-        .values()
-        .flatten()
-        .map(|dep| dep.dep_path.as_str())
-        .collect();
-    let stale: Vec<String> = graph
-        .packages
-        .iter()
-        .filter_map(|(dep_path, pkg)| {
-            let Some(LocalSource::Link(path)) = pkg.local_source.as_ref() else {
-                return None;
-            };
-            let current = links.get(&pkg.name)?;
-            (std::path::Path::new(current) != path.as_path() && !direct.contains(dep_path.as_str()))
-                .then(|| dep_path.clone())
-        })
-        .collect();
-    for dep_path in stale {
-        graph.packages.remove(&dep_path);
     }
     let mut added = Vec::new();
     for dep in graph.importers.values().flatten() {
@@ -3429,6 +3413,17 @@ mod tests {
         assert_eq!(unmet[0].found.as_deref(), Some("17.0.0"));
 
         react.version = "0.0.0".to_string();
+        g.packages.insert(react.dep_path.clone(), react.clone());
+        assert_eq!(
+            detect_unmet_peers(&g).len(),
+            1,
+            "a manifest version of 0.0.0 is a real version and must be checked"
+        );
+
+        react.extra_meta.insert(
+            aube_lockfile::EXTRA_UNKNOWN_VERSION.to_string(),
+            serde_json::Value::Bool(true),
+        );
         g.packages.insert(react.dep_path.clone(), react);
         assert!(
             detect_unmet_peers(&g).is_empty(),

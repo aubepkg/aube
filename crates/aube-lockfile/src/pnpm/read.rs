@@ -331,6 +331,10 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
                     peer_dependencies_meta: BTreeMap::new(),
                     dep_path: dep_path.clone(),
                     local_source: Some(local),
+                    extra_meta: BTreeMap::from([(
+                        crate::EXTRA_UNKNOWN_VERSION.to_string(),
+                        serde_json::Value::Bool(true),
+                    )]),
                     ..Default::default()
                 });
             if should_rebase {
@@ -1197,6 +1201,10 @@ fn adopt_link_dependency_edges(packages: &mut BTreeMap<String, LockedPackage>) {
                     version: "0.0.0".to_string(),
                     dep_path,
                     local_source: Some(local),
+                    extra_meta: BTreeMap::from([(
+                        crate::EXTRA_UNKNOWN_VERSION.to_string(),
+                        serde_json::Value::Bool(true),
+                    )]),
                     ..Default::default()
                 });
         }

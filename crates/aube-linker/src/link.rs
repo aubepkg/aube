@@ -1979,6 +1979,9 @@ fn reconcile_local_entry_links(
     };
     let nm = entry.join("node_modules");
     for (dep_name, dep_version) in &pkg.dependencies {
+        if dep_name == &pkg.name {
+            continue;
+        }
         let Some(target) = targets.get(&aube_lockfile::dep_edge_key(dep_name, dep_version)) else {
             continue;
         };
