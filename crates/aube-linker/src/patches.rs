@@ -158,10 +158,6 @@ fn apply_trailing_whitespace_tolerant(
     patch: &diffy::Patch<'_, str>,
 ) -> Option<String> {
     let lines: Vec<&str> = original.split_inclusive('\n').collect();
-    // Compare trailing-whitespace-insensitively, but keep whether the line is
-    // newline-terminated so an unterminated last line never matches (and then
-    // gets joined to appended text).
-    let trimmed = |line: &str| (line.trim_end().to_string(), line.ends_with('\n'));
     let mut out = String::with_capacity(original.len());
     let mut cursor = 0_usize;
     for hunk in patch.hunks() {
@@ -171,28 +167,42 @@ fn apply_trailing_whitespace_tolerant(
         } else {
             range.start().saturating_sub(1)
         };
-        let expected: Vec<(String, bool)> = hunk
+        let expected: Vec<&str> = hunk
             .lines()
             .iter()
             .filter_map(|line| match line {
-                diffy::Line::Context(text) | diffy::Line::Delete(text) => Some(trimmed(text)),
+                diffy::Line::Context(text) | diffy::Line::Delete(text) => Some(*text),
                 diffy::Line::Insert(_) => None,
             })
             .collect();
+        // An unterminated last file line may match a terminated hunk line
+        // only when nothing is appended after it, otherwise the appended text
+        // would be joined onto that line.
+        let nothing_appended = !matches!(hunk.lines().last(), Some(diffy::Line::Insert(_)));
+        let matches_at = |position: usize| {
+            let Some(end) = position.checked_add(expected.len()) else {
+                return false;
+            };
+            let Some(window) = lines.get(position..end) else {
+                return false;
+            };
+            window
+                .iter()
+                .zip(&expected)
+                .enumerate()
+                .all(|(i, (file, want))| {
+                    file.trim_end() == want.trim_end()
+                        && (file.ends_with('\n') == want.ends_with('\n')
+                            || (nothing_appended
+                                && i + 1 == expected.len()
+                                && position + i + 1 == lines.len()))
+                })
+        };
         let position = std::iter::once(0_isize)
             .chain((1..=20).flat_map(|offset| [-offset, offset]))
             .filter_map(|offset| base.checked_add_signed(offset))
             .filter(|&position| position >= cursor)
-            .find(|&position| {
-                lines
-                    .get(position..position + expected.len())
-                    .is_some_and(|window| {
-                        window
-                            .iter()
-                            .map(|line| trimmed(line))
-                            .eq(expected.iter().cloned())
-                    })
-            })?;
+            .find(|&position| matches_at(position))?;
         for line in &lines[cursor..position] {
             out.push_str(line);
         }
@@ -687,6 +697,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.txt"), "old\nend").unwrap();
         let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,3 @@\n-old\n+new\n end\n+added\n";
+        assert!(apply_multi_file_patch(dir.path(), patch).is_err());
+    }
+
+    #[test]
+    fn tolerant_apply_combines_eof_context_with_trailing_whitespace() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "old \nend").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old\n+new\n end\n";
+        apply_multi_file_patch(dir.path(), patch).unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("a.txt")).unwrap(),
+            b"new\nend"
+        );
+    }
+
+    #[test]
+    fn tolerant_apply_rejects_hunk_headers_near_usize_max() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "old\n").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -18446744073709551615 +1 @@\n-old \n+new\n";
         assert!(apply_multi_file_patch(dir.path(), patch).is_err());
     }
 
