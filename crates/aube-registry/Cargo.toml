@@ -30,6 +30,7 @@ sha2 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 zip = { workspace = true }
+hickory-resolver = { version = "0.26", optional = true }
 
 [features]
 # Default is rustls only. hickory-dns is deliberately NOT default:
@@ -43,7 +44,7 @@ zip = { workspace = true }
 # required; without it the crate fails to compile.
 default = ["rustls"]
 rustls = ["reqwest/rustls", "aube-util/rustls"]
-hickory-dns = ["reqwest/hickory-dns"]
+hickory-dns = ["reqwest/hickory-dns", "dep:hickory-resolver"]
 
 [dev-dependencies]
 tempfile = "3"
