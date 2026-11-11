@@ -71,7 +71,13 @@ pub fn detect_unmet_peers(graph: &LockfileGraph) -> Vec<UnmetPeer> {
             let found_version = found_tail.map(|t| canonical_tail(t).to_string());
 
             let satisfied = match &found_version {
-                Some(v) => version_satisfies(v, declared_range),
+                Some(v) => {
+                    // pnpm retries a rejected prerelease provider as its
+                    // base release, so `19.0.0-rc.1` satisfies `^19.0.0`.
+                    version_satisfies(v, declared_range)
+                        || v.split_once(['-', '+'])
+                            .is_some_and(|(base, _)| version_satisfies(base, declared_range))
+                }
                 None => false,
             };
             if satisfied {

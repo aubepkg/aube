@@ -3755,6 +3755,25 @@ fn detect_unmet_peers_flags_version_mismatch() {
     assert_eq!(u.found.as_deref(), Some("15.7.0"));
 }
 
+// A prerelease provider satisfies a range its base release satisfies.
+#[test]
+fn detect_unmet_peers_accepts_prerelease_of_in_range_base() {
+    let mut consumer = mk_locked(
+        "consumer",
+        "1.0.0",
+        &[("react", "19.0.0-rc.1")],
+        &[("react", "^18 || ^19")],
+    );
+    consumer.dep_path = "consumer@1.0.0(react@19.0.0-rc.1)".to_string();
+    let mut packages = BTreeMap::new();
+    packages.insert(consumer.dep_path.clone(), consumer);
+    let graph = LockfileGraph {
+        packages,
+        ..Default::default()
+    };
+    assert!(detect_unmet_peers(&graph).is_empty());
+}
+
 // When the resolved version *does* satisfy the declared range, no
 // warning should fire.
 #[test]
