@@ -2641,6 +2641,7 @@ allowlist means exactly what it lists. Bun treats an explicit
 sources.cli = []
 sources.env = ["npm_config_use_default_trusted_dependencies", "NPM_CONFIG_USE_DEFAULT_TRUSTED_DEPENDENCIES", "AUBE_USE_DEFAULT_TRUSTED_DEPENDENCIES"]
 sources.npmrc = ["useDefaultTrustedDependencies"]
+sources.workspaceYaml = ["useDefaultTrustedDependencies"]
 examples = ["useDefaultTrustedDependencies: false"]
 
 # ========================================= Node.js =========================================

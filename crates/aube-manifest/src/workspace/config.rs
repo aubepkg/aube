@@ -494,6 +494,11 @@ pub struct WorkspaceConfig {
     #[serde(default, rename = "jailBuildPermissions")]
     pub jail_build_permissions: BTreeMap<String, JailBuildPermission>,
 
+    /// Seed the build allowlist with aube's built-in trusted-dependencies
+    /// list. Same typed/raw duality as `child_concurrency`.
+    #[serde(default, rename = "useDefaultTrustedDependencies")]
+    pub use_default_trusted_dependencies: Option<bool>,
+
     // -- Catalog Settings --
     /// Drop catalog entries that no importer references after resolve.
     /// Wired through `aube_settings::resolved::catalog_prune`;
