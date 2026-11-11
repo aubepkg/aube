@@ -311,3 +311,23 @@ EOF
 	assert_output --partial "ran-in-a"
 	refute_output --partial "ran-in-b"
 }
+
+@test "aube exec --filter resolves relative PATH entries from each package dir" {
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	cat >package.json <<'EOF'
+{"name":"root","version":"0.0.0","private":true}
+EOF
+	mkdir -p packages/a/tools
+	echo '{"name":"a","version":"0.0.0"}' >packages/a/package.json
+	printf '#!/bin/sh\necho rel-tool-ran\n' >packages/a/tools/rel-tool
+	chmod +x packages/a/tools/rel-tool
+	run aube install
+	assert_success
+
+	PATH="tools:$PATH" run aube --filter a exec --no-install rel-tool
+	assert_success
+	assert_output --partial "rel-tool-ran"
+}
