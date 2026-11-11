@@ -195,6 +195,13 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
                             DriftStatus::Fresh,
                         )
                             && matches!(g.check_catalogs_drift(workspace_catalogs), DriftStatus::Fresh)
+                            && matches!(
+                                g.check_settings_drift(
+                                    &super::settings::resolve_lockfile_settings_extra(settings_ctx),
+                                    k,
+                                ),
+                                DriftStatus::Fresh
+                            )
                 );
     if fresh {
         tracing::debug!("--lockfile-only: lockfile already up to date");
@@ -414,6 +421,7 @@ pub(super) struct SelectLockfileInput<'a> {
     pub workspace_catalogs: &'a crate::commands::CatalogMap,
     pub is_workspace_project: bool,
     pub lockfile_pre_parse: Option<&'a (LockfileGraph, LockfileKind)>,
+    pub lockfile_settings_extra: &'a std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 pub(super) fn select_lockfile_result(
@@ -433,6 +441,7 @@ pub(super) fn select_lockfile_result(
         workspace_catalogs,
         is_workspace_project,
         lockfile_pre_parse,
+        lockfile_settings_extra,
     } = input;
     if !lockfile_enabled {
         tracing::debug!("lockfile=false: skipping lockfile parse, re-resolving");
@@ -520,6 +529,13 @@ pub(super) fn select_lockfile_result(
                     {
                         tracing::debug!(
                             "Lockfile out of date with workspace catalogs ({reason}), re-resolving..."
+                        );
+                        Ok(Err(aube_lockfile::Error::NotFound(cwd.to_path_buf())))
+                    } else if let DriftStatus::Stale { reason } =
+                        graph.check_settings_drift(lockfile_settings_extra, *kind)
+                    {
+                        tracing::debug!(
+                            "Lockfile out of date with lockfile settings ({reason}), re-resolving..."
                         );
                         Ok(Err(aube_lockfile::Error::NotFound(cwd.to_path_buf())))
                     } else if let DriftStatus::Stale { reason } =

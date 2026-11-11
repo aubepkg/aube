@@ -82,11 +82,11 @@ use materialize::{
     plan_virtual_store, spawn_gvs_prewarm,
 };
 pub(crate) use settings::PeerDependencyRules;
-pub(crate) use settings::resolve_catalog_prune;
 pub(crate) use settings::resolve_minimum_release_age;
 pub(crate) use settings::{
     ResolverConfigInputs, configure_resolver, finalize_lockfile_graph, resolve_dependency_policy,
 };
+pub(crate) use settings::{resolve_catalog_prune, resolve_lockfile_settings_extra};
 pub(crate) use side_effects_cache::{SideEffectsCacheConfig, side_effects_cache_root};
 
 use settings::{
@@ -412,6 +412,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
     // workspace's catalog. See `discover_catalogs` for the precedence
     // order.
     let workspace_catalogs = super::discover_catalogs(&cwd)?;
+    let lockfile_settings_extra = settings::resolve_lockfile_settings_extra(&settings_ctx);
     let packument_cache_dir =
         super::resolved_cache_dir_with_ctx(&cwd, &settings_ctx).join("packuments-v1");
     let explicit_store_dir_override = has_explicit_store_dir_override(&opts.cli_flags);
@@ -710,6 +711,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 workspace_catalogs: &workspace_catalogs,
                 is_workspace_project,
                 lockfile_pre_parse: lockfile_pre_parse.as_ref(),
+                lockfile_settings_extra: &lockfile_settings_extra,
             })? {
                 Ok(_) => {}
                 Err(aube_lockfile::Error::NotFound(_)) => {
@@ -905,6 +907,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         workspace_catalogs: &workspace_catalogs,
         is_workspace_project,
         lockfile_pre_parse: lockfile_pre_parse.as_ref(),
+        lockfile_settings_extra: &lockfile_settings_extra,
     })?;
 
     // Deprecation messages from freshly-resolved packages. Only the

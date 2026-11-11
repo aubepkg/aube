@@ -533,7 +533,7 @@ fn include_resolution_settings(ctx: &aube_settings::ResolveCtx<'_>) -> bool {
 /// `lockfile.includeResolutionSettings`. pnpm compares these on a frozen
 /// install, so a stale or missing entry makes it fail with
 /// `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`.
-pub(super) fn resolve_lockfile_settings_extra(
+pub(crate) fn resolve_lockfile_settings_extra(
     ctx: &aube_settings::ResolveCtx<'_>,
 ) -> std::collections::BTreeMap<String, serde_json::Value> {
     let mut out = std::collections::BTreeMap::new();

@@ -6099,3 +6099,12 @@ proptest::proptest! {
         proptest::prop_assert_eq!(parsed.settings.extra, extra);
     }
 }
+
+#[test]
+fn pnpm_branch_lockfiles_count_as_native_pnpm_names() {
+    use super::write::is_pnpm_lockfile_name;
+    assert!(is_pnpm_lockfile_name("pnpm-lock.yaml"));
+    assert!(is_pnpm_lockfile_name("pnpm-lock.feature-x.yaml"));
+    assert!(!is_pnpm_lockfile_name("aube-lock.yaml"));
+    assert!(!is_pnpm_lockfile_name("pnpm-lock..yaml"));
+}

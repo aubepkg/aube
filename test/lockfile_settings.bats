@@ -694,3 +694,32 @@ NODE
   excludeLinksFromLockfile: false
   injectWorkspacePackages: true"
 }
+
+@test "a config-only change refreshes pnpm-lock.yaml settings on install" {
+	cat >package.json <<-'EOF2'
+		{
+		  "name": "test-pnpm-settings-config-only",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1" }
+		}
+	EOF2
+	printf 'default-lockfile-format=pnpm\n' >>.npmrc
+	run aube install --no-frozen-lockfile
+	assert_success
+	run grep -c injectWorkspacePackages pnpm-lock.yaml
+	assert_output 0
+
+	printf 'injectWorkspacePackages: true\n' >pnpm-workspace.yaml
+	run aube install
+	assert_success
+	run grep 'injectWorkspacePackages: true' pnpm-lock.yaml
+	assert_success
+
+	printf 'addMissingPeerTypes: true\n' >pnpm-workspace.yaml
+	run aube install --lockfile-only
+	assert_success
+	run grep 'addMissingPeerTypes: true' pnpm-lock.yaml
+	assert_success
+	run grep -c injectWorkspacePackages pnpm-lock.yaml
+	assert_output 0
+}

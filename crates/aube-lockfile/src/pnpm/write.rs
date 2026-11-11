@@ -250,7 +250,7 @@ pub fn write_with_project_root(
     let native_pnpm_aliases = path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name == "pnpm-lock.yaml");
+        .is_some_and(is_pnpm_lockfile_name);
     // Patch identities are part of the pnpm v9 format itself, so
     // aube-lock.yaml records them too; otherwise the same patched
     // package serializes differently depending on whether the graph
@@ -1408,4 +1408,12 @@ struct WritableSnapshot {
     optional: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     bundled_dependencies: Option<Vec<String>>,
+}
+
+/// `pnpm-lock.yaml` and its git-branch variants `pnpm-lock.<branch>.yaml`.
+pub(super) fn is_pnpm_lockfile_name(name: &str) -> bool {
+    name == "pnpm-lock.yaml"
+        || name
+            .strip_prefix("pnpm-lock.")
+            .is_some_and(|rest| rest.ends_with(".yaml") && rest.len() > ".yaml".len())
 }
