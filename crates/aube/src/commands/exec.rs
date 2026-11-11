@@ -414,8 +414,11 @@ fn find_on_path(cwd: &Path, bin: &str) -> Option<PathBuf> {
         return None;
     }
     let path_dirs = crate::runtime::user_command_path_entries(project_bin_dirs(cwd));
-    let path = aube_scripts::prepend_paths(&path_dirs);
-    std::env::split_paths(&path)
+    find_in_path(cwd, bin, &aube_scripts::prepend_paths(&path_dirs))
+}
+
+fn find_in_path(cwd: &Path, bin: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    std::env::split_paths(path)
         .flat_map(|dir| {
             // Relative and empty entries resolve against the child's cwd.
             let dir = if dir.is_absolute() {
@@ -771,6 +774,31 @@ mod tests {
             "aube-no-such-cmd-1947"
         ));
         assert!(super::find_on_path(tmp.path(), "../sh").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn relative_path_entries_resolve_against_the_package_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg = tmp.path().join("packages/a");
+        let tool = pkg.join("tools/my-tool");
+        std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
+        std::fs::write(&tool, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::ffi::OsString::from("tools");
+        assert_eq!(super::find_in_path(&pkg, "my-tool", &path), Some(tool));
+        assert!(super::find_in_path(tmp.path(), "my-tool", &path).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn path_only_cmd_files_resolve_to_the_full_file_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cmd = tmp.path().join("tool.cmd");
+        std::fs::write(&cmd, "@echo off\r\n").unwrap();
+        let path = tmp.path().as_os_str().to_owned();
+        assert_eq!(super::find_in_path(tmp.path(), "tool", &path), Some(cmd));
     }
 
     #[cfg(unix)]
