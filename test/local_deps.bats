@@ -893,7 +893,7 @@ lockfileVersion: '9.0'
 settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
-  peersSuffixMaxLength: 80
+  futureSetting: 80
 
 importers:
 
@@ -918,7 +918,7 @@ EOF
 
 	run aube add is-number@7.0.0
 	assert_success
-	assert_file_contains pnpm-lock.yaml 'peersSuffixMaxLength: 80'
+	assert_file_contains pnpm-lock.yaml 'futureSetting: 80'
 	assert_file_contains pnpm-lock.yaml 'bundler@file:deps/bundler.tgz:'
 	assert_file_contains pnpm-lock.yaml 'version: 1.0.0'
 	assert_file_contains pnpm-lock.yaml 'bundled-child$'

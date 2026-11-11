@@ -1738,6 +1738,25 @@ fn hash_settings(project_dir: &Path, cli_flags: &[(String, String)]) -> String {
     // installed dependency tree itself.
     let catalog_prune = crate::commands::install::resolve_catalog_prune(&ctx);
     hasher.update(format!("catalog_prune={catalog_prune}\0").as_bytes());
+    // The pnpm lockfile `settings:` header is derived from config, so a
+    // change must not be reported as up to date without rewriting it.
+    let lockfile_settings = crate::commands::install::resolve_lockfile_settings_extra(&ctx);
+    hasher.update(
+        format!(
+            "auto_install_peers={}\0exclude_links_from_lockfile={}\0lockfile_include_tarball_url={}\0",
+            aube_settings::resolved::auto_install_peers(&ctx),
+            aube_settings::resolved::exclude_links_from_lockfile(&ctx),
+            aube_settings::resolved::lockfile_include_tarball_url(&ctx),
+        )
+        .as_bytes(),
+    );
+    hasher.update(b"lockfile_settings=");
+    hasher.update(
+        serde_json::to_string(&lockfile_settings)
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    hasher.update(b"\0");
     // additional tree shape settings. cover enable_modules_dir flip
     // (pnpm equivalent of --lockfile-only persistent), virtual_store_only,
     // hoist_workspace_packages, dedupe_direct_deps, symlink,

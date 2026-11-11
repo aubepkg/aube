@@ -39,6 +39,10 @@ pub(crate) const EXTRA_YARN_RESOLVED: &str = "__aube_yarn_resolved";
 /// Internal `extra_meta` key holding the registry's hex `dist.shasum`, which
 /// the yarn v1 writer appends to a new entry's `resolved` URL as `#<sha1>`.
 pub const EXTRA_REGISTRY_SHASUM: &str = "__aube_registry_shasum";
+/// Internal `extra_meta` marker on a `link:` package read from a lockfile,
+/// whose `version` is a `0.0.0` placeholder because the lockfile does not
+/// record the target manifest's version. Writers never emit it.
+pub const EXTRA_UNKNOWN_VERSION: &str = "__aube_unknown_version";
 /// Internal `extra_meta` marker behind
 /// [`LockedPackage::declared_dependencies_known`]. Writers never emit it.
 pub(crate) const EXTRA_DECLARED_DEPENDENCIES_KNOWN: &str = "__aube_declared_dependencies_known";
@@ -291,6 +295,11 @@ pub struct LockfileSettings {
     /// `settings:` header so it survives parse/write cycles without
     /// re-reading `.npmrc`.
     pub lockfile_include_tarball_url: bool,
+    /// Every other `settings:` entry (`dedupePeers`,
+    /// `injectWorkspacePackages`, `peersSuffixMaxLength`, …). Fresh
+    /// resolves fill this from the current configuration; a parsed
+    /// pnpm lockfile carries whatever the file recorded.
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 impl Default for LockfileSettings {
@@ -299,9 +308,24 @@ impl Default for LockfileSettings {
             auto_install_peers: true,
             exclude_links_from_lockfile: false,
             lockfile_include_tarball_url: false,
+            extra: BTreeMap::new(),
         }
     }
 }
+
+/// `settings:` keys aube derives from the current configuration on every
+/// resolve. The pnpm writer never copies these from the lockfile being
+/// replaced, so a config change (or reset to default) is reflected.
+pub const DERIVED_PNPM_SETTING_KEYS: &[&str] = &[
+    "addMissingPeerTypes",
+    "autoDedupe",
+    "dedupeInjectedDeps",
+    "dedupePeerDependents",
+    "dedupePeers",
+    "injectWorkspacePackages",
+    "linkWorkspacePackages",
+    "peersSuffixMaxLength",
+];
 
 /// A direct dependency of a workspace importer.
 #[derive(Debug, Clone)]

@@ -243,3 +243,91 @@ EOF
 
 	cleanup
 }
+
+@test "aube exec runs commands found on PATH when no project bin provides them" {
+	cat >package.json <<'EOF'
+{"name":"path-exec","version":"1.0.0"}
+EOF
+	run aube install
+	assert_success
+
+	run aube exec --no-install ls package.json
+	assert_success
+	assert_output "package.json"
+
+	run aube exec --no-install -- sh -c 'printf sh-ok'
+	assert_success
+	assert_output "sh-ok"
+
+	run aube exec --no-install definitely-not-a-real-command-1947
+	assert_failure
+	assert_output --partial "binary not found: definitely-not-a-real-command-1947"
+}
+
+@test "aube exec prefers a project bin over a PATH command of the same name" {
+	cat >package.json <<'EOF'
+{"name":"path-exec-local","version":"1.0.0"}
+EOF
+	run aube install
+	assert_success
+	mkdir -p node_modules/.bin
+	printf '#!/bin/sh\necho local-ls\n' >node_modules/.bin/ls
+	chmod +x node_modules/.bin/ls
+
+	run aube exec --no-install ls
+	assert_success
+	assert_output "local-ls"
+}
+
+@test "aube exec -r and --parallel run PATH commands in every workspace package" {
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	cat >package.json <<'EOF'
+{"name":"root","version":"0.0.0","private":true}
+EOF
+	mkdir -p packages/a packages/b
+	echo '{"name":"a","version":"0.0.0"}' >packages/a/package.json
+	echo '{"name":"b","version":"0.0.0"}' >packages/b/package.json
+	run aube install
+	assert_success
+
+	# shellcheck disable=SC2016
+	run aube -r exec --no-install -- sh -c 'echo "ran-in-$(basename "$PWD")"'
+	assert_success
+	assert_output --partial "ran-in-a"
+	assert_output --partial "ran-in-b"
+
+	# shellcheck disable=SC2016
+	run aube -r exec --parallel --no-install -- sh -c 'echo "ran-in-$(basename "$PWD")"'
+	assert_success
+	assert_output --partial "ran-in-a"
+	assert_output --partial "ran-in-b"
+
+	# shellcheck disable=SC2016
+	run aube --filter a exec --no-install -- sh -c 'echo "ran-in-$(basename "$PWD")"'
+	assert_success
+	assert_output --partial "ran-in-a"
+	refute_output --partial "ran-in-b"
+}
+
+@test "aube exec --filter resolves relative PATH entries from each package dir" {
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	cat >package.json <<'EOF'
+{"name":"root","version":"0.0.0","private":true}
+EOF
+	mkdir -p packages/a/tools
+	echo '{"name":"a","version":"0.0.0"}' >packages/a/package.json
+	printf '#!/bin/sh\necho rel-tool-ran\n' >packages/a/tools/rel-tool
+	chmod +x packages/a/tools/rel-tool
+	run aube install
+	assert_success
+
+	PATH="tools:$PATH" run aube --filter a exec --no-install rel-tool
+	assert_success
+	assert_output --partial "rel-tool-ran"
+}

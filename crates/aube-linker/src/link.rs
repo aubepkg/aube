@@ -257,6 +257,7 @@ impl Linker {
                     nested_link_targets.as_ref(),
                 )?;
             } else {
+                reconcile_local_entry_links(&aube_entry, pkg, nested_link_targets.as_ref())?;
                 stats.packages_cached += 1;
             }
         }
@@ -343,6 +344,11 @@ impl Linker {
                         if matches!(state, EntryState::Fresh) {
                             local_stats.packages_cached += 1;
                             if project_local {
+                                reconcile_local_entry_links(
+                                    &local_aube_entry,
+                                    pkg,
+                                    nested_link_targets.as_ref(),
+                                )?;
                                 return Ok((local_stats, None));
                             }
                             let reconciled = self.reconcile_virtual_store_entry(
@@ -974,6 +980,7 @@ impl Linker {
                             .map_err(|e| Error::Io(link_path.clone(), e))?;
                     }
                 }
+                reconcile_local_entry_links(&aube_entry, pkg, nested_link_targets.as_ref())?;
                 stats.packages_cached += 1;
                 continue;
             }
@@ -1044,7 +1051,13 @@ impl Linker {
                             let state = self.forced_entry_state(state);
 
                             if matches!(state, EntryState::Fresh) {
-                                if !project_local {
+                                if project_local {
+                                    reconcile_local_entry_links(
+                                        &local_aube_entry,
+                                        pkg,
+                                        nested_link_targets.as_ref(),
+                                    )?;
+                                } else {
                                     self.reconcile_virtual_store_entry(
                                         dep_path,
                                         pkg,
@@ -1724,11 +1737,24 @@ impl Linker {
             let link_parent = target_dir.parent().unwrap_or(&hidden);
             let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
                 .unwrap_or_else(|| source_dir.clone());
-            if reconcile_dir_link(&target_dir, &rel_target)? {
-                return Ok(());
+            // The shared GVS mirror can be linked by other processes at
+            // the same time. A missing link may appear between reconcile
+            // and create (`AlreadyExists`), so re-reconcile: an identical
+            // winner is kept, a different one is replaced. Bounded so two
+            // projects that keep flipping one name still terminate.
+            let mut attempts = 0;
+            loop {
+                if reconcile_dir_link(&target_dir, &rel_target)? {
+                    return Ok(());
+                }
+                match sys::create_dir_link(&rel_target, &target_dir) {
+                    Ok(()) => break,
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempts < 8 => {
+                        attempts += 1;
+                    }
+                    Err(e) => return Err(Error::Io(target_dir.clone(), e)),
+                }
             }
-            sys::create_dir_link(&rel_target, &target_dir)
-                .map_err(|e| Error::Io(target_dir.clone(), e))?;
             trace!("hidden-hoist: {}", pkg.name);
             // Intentionally not counted in `stats.top_level_linked`.
             // That counter reflects the user-visible root
@@ -1950,6 +1976,35 @@ pub fn build_workspace_nested_link_targets(
         map.insert(key, dir.clone());
     }
     if map.is_empty() { None } else { Some(map) }
+}
+
+/// Retarget the `link:` and workspace dependency links of a current
+/// project-local entry. The entry itself stays valid when such an edge moves
+/// (a workspace member renamed its directory), but its link would still
+/// point at the old location.
+fn reconcile_local_entry_links(
+    entry: &Path,
+    pkg: &LockedPackage,
+    nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
+) -> Result<(), Error> {
+    let Some(targets) = nested_link_targets else {
+        return Ok(());
+    };
+    let nm = entry.join("node_modules");
+    for (dep_name, dep_version) in &pkg.dependencies {
+        if dep_name == &pkg.name {
+            continue;
+        }
+        let Some(target) = targets.get(&aube_lockfile::dep_edge_key(dep_name, dep_version)) else {
+            continue;
+        };
+        crate::validate_package_link_name(dep_name)?;
+        let link = nm.join(dep_name);
+        if !reconcile_dir_link(&link, target)? {
+            create_dir_link_idempotent(target, &link)?;
+        }
+    }
+    Ok(())
 }
 
 /// Whether a package materialized under `aube_dir` finds the root links

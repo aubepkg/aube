@@ -121,6 +121,10 @@ Use `aube config find <words>` to search from your terminal, or `aube config exp
 | [`autoInstallPeers`](#setting-autoinstallpeers) | `bool` | Automatically install missing peer dependencies. |
 | [`dedupePeerDependents`](#setting-dedupepeerdependents) | `bool` | Deduplicate packages that have peer dependencies. |
 | [`dedupePeers`](#setting-dedupepeers) | `bool` | Use version-only identifiers for peer suffixes in the lockfile. |
+| [`addMissingPeerTypes`](#setting-addmissingpeertypes) | `bool` | Record pnpm's `addMissingPeerTypes` in the lockfile `settings:` header. |
+| [`injectWorkspacePackages`](#setting-injectworkspacepackages) | `bool` | Record pnpm's `injectWorkspacePackages` in the lockfile `settings:` header. |
+| [`autoDedupe`](#setting-autodedupe) | `bool` | Record pnpm's `autoDedupe` in the lockfile resolution settings. |
+| [`dedupeInjectedDeps`](#setting-dedupeinjecteddeps) | `bool` | Record pnpm's `dedupeInjectedDeps` in the lockfile resolution settings. |
 | [`strictPeerDependencies`](#setting-strictpeerdependencies) | `bool` | Fail if peer dependencies are missing or invalid. |
 | [`resolvePeersFromWorkspaceRoot`](#setting-resolvepeersfromworkspaceroot) | `bool` | Use root workspace dependencies for peer resolution. |
 | [`peerDependencyRules.ignoreMissing`](#setting-peerdependencyrules-ignoremissing) | `list<string>` | Suppress warnings for specific missing peer dependencies. |
@@ -2148,6 +2152,64 @@ default `(react@18.2.0)`. Applied as a post-pass over the resolved
 graph — the resolver's cycle detection still runs against the full
 `name@version` form, so mutual-peer cycles converge the same way
 either form.
+
+### `addMissingPeerTypes` {#setting-addmissingpeertypes}
+
+Record pnpm's `addMissingPeerTypes` in the lockfile `settings:` header.
+
+- Type: `bool`
+- Default: `false`
+- Environment: `npm_config_add_missing_peer_types`, `NPM_CONFIG_ADD_MISSING_PEER_TYPES`, `AUBE_ADD_MISSING_PEER_TYPES`
+- .npmrc keys: `addMissingPeerTypes`, `add-missing-peer-types`
+- Workspace YAML keys: `addMissingPeerTypes`
+
+pnpm records this in `pnpm-lock.yaml`'s `settings:` block and rejects a
+frozen install when the configured value differs from the lockfile's.
+aube writes the current value (omitted when `false`, like pnpm) so a
+lockfile written by aube stays acceptable to `pnpm install
+--frozen-lockfile`. aube does not change resolution based on it.
+
+### `injectWorkspacePackages` {#setting-injectworkspacepackages}
+
+Record pnpm's `injectWorkspacePackages` in the lockfile `settings:` header.
+
+- Type: `bool`
+- Default: `false`
+- Environment: `npm_config_inject_workspace_packages`, `NPM_CONFIG_INJECT_WORKSPACE_PACKAGES`, `AUBE_INJECT_WORKSPACE_PACKAGES`
+- .npmrc keys: `injectWorkspacePackages`, `inject-workspace-packages`
+- Workspace YAML keys: `injectWorkspacePackages`
+
+pnpm records this in `pnpm-lock.yaml`'s `settings:` block and rejects a
+frozen install when the configured value differs from the lockfile's.
+aube writes the current value (omitted when `false`, like pnpm) so a
+lockfile written by aube stays acceptable to `pnpm install
+--frozen-lockfile`. aube does not change linking based on it.
+
+### `autoDedupe` {#setting-autodedupe}
+
+Record pnpm's `autoDedupe` in the lockfile resolution settings.
+
+- Type: `bool`
+- Default: `false`
+- Environment: `npm_config_auto_dedupe`, `NPM_CONFIG_AUTO_DEDUPE`, `AUBE_AUTO_DEDUPE`
+- .npmrc keys: `autoDedupe`, `auto-dedupe`
+- Workspace YAML keys: `autoDedupe`
+
+Written to the lockfile `settings:` header only when
+`lockfile.includeResolutionSettings` is `true`, mirroring pnpm.
+
+### `dedupeInjectedDeps` {#setting-dedupeinjecteddeps}
+
+Record pnpm's `dedupeInjectedDeps` in the lockfile resolution settings.
+
+- Type: `bool`
+- Default: `true`
+- Environment: `npm_config_dedupe_injected_deps`, `NPM_CONFIG_DEDUPE_INJECTED_DEPS`, `AUBE_DEDUPE_INJECTED_DEPS`
+- .npmrc keys: `dedupeInjectedDeps`, `dedupe-injected-deps`
+- Workspace YAML keys: `dedupeInjectedDeps`
+
+Written to the lockfile `settings:` header only when
+`lockfile.includeResolutionSettings` is `true`, mirroring pnpm.
 
 ### `strictPeerDependencies` {#setting-strictpeerdependencies}
 

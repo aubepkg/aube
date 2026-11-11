@@ -195,6 +195,13 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
                             DriftStatus::Fresh,
                         )
                             && matches!(g.check_catalogs_drift(workspace_catalogs), DriftStatus::Fresh)
+                            && matches!(
+                                g.check_settings_drift(
+                                    &super::settings::resolve_lockfile_settings(settings_ctx),
+                                    k,
+                                ),
+                                DriftStatus::Fresh
+                            )
                 );
     if fresh {
         tracing::debug!("--lockfile-only: lockfile already up to date");
@@ -414,6 +421,7 @@ pub(super) struct SelectLockfileInput<'a> {
     pub workspace_catalogs: &'a crate::commands::CatalogMap,
     pub is_workspace_project: bool,
     pub lockfile_pre_parse: Option<&'a (LockfileGraph, LockfileKind)>,
+    pub lockfile_settings: &'a aube_lockfile::LockfileSettings,
 }
 
 pub(super) fn select_lockfile_result(
@@ -433,6 +441,7 @@ pub(super) fn select_lockfile_result(
         workspace_catalogs,
         is_workspace_project,
         lockfile_pre_parse,
+        lockfile_settings,
     } = input;
     if !lockfile_enabled {
         tracing::debug!("lockfile=false: skipping lockfile parse, re-resolving");
@@ -479,6 +488,15 @@ pub(super) fn select_lockfile_result(
                          help: run without --frozen-lockfile to update the lockfile"
                     ));
                 }
+                if let DriftStatus::Stale { reason } =
+                    graph.check_settings_drift(lockfile_settings, kind)
+                {
+                    return Err(miette!(
+                        code = aube_codes::errors::ERR_AUBE_LOCKFILE_CONFIG_MISMATCH,
+                        "lockfile is out of date with the current settings: {reason}\n\
+                         help: run without --frozen-lockfile to update the lockfile"
+                    ));
+                }
                 if let DriftStatus::Stale { reason } = graph
                     .check_drift_workspace_with_local_targets_for_kind(
                         manifests,
@@ -520,6 +538,13 @@ pub(super) fn select_lockfile_result(
                     {
                         tracing::debug!(
                             "Lockfile out of date with workspace catalogs ({reason}), re-resolving..."
+                        );
+                        Ok(Err(aube_lockfile::Error::NotFound(cwd.to_path_buf())))
+                    } else if let DriftStatus::Stale { reason } =
+                        graph.check_settings_drift(lockfile_settings, *kind)
+                    {
+                        tracing::debug!(
+                            "Lockfile out of date with lockfile settings ({reason}), re-resolving..."
                         );
                         Ok(Err(aube_lockfile::Error::NotFound(cwd.to_path_buf())))
                     } else if let DriftStatus::Stale { reason } =
@@ -733,6 +758,7 @@ pub(crate) fn lockfile_peer_context_options(
             settings_ctx,
         ),
         peers_suffix_max_length: super::settings::resolve_peers_suffix_max_length(settings_ctx),
+        workspace_links: Default::default(),
     }
 }
 

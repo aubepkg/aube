@@ -331,6 +331,10 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
                     peer_dependencies_meta: BTreeMap::new(),
                     dep_path: dep_path.clone(),
                     local_source: Some(local),
+                    extra_meta: BTreeMap::from([(
+                        crate::EXTRA_UNKNOWN_VERSION.to_string(),
+                        serde_json::Value::Bool(true),
+                    )]),
                     ..Default::default()
                 });
             if should_rebase {
@@ -1076,6 +1080,7 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             auto_install_peers: s.auto_install_peers.unwrap_or(true),
             exclude_links_from_lockfile: s.exclude_links_from_lockfile.unwrap_or(false),
             lockfile_include_tarball_url: s.lockfile_include_tarball_url.unwrap_or(false),
+            extra: s.extra,
         })
         .unwrap_or_default();
 
@@ -1197,6 +1202,10 @@ fn adopt_link_dependency_edges(packages: &mut BTreeMap<String, LockedPackage>) {
                     version: "0.0.0".to_string(),
                     dep_path,
                     local_source: Some(local),
+                    extra_meta: BTreeMap::from([(
+                        crate::EXTRA_UNKNOWN_VERSION.to_string(),
+                        serde_json::Value::Bool(true),
+                    )]),
                     ..Default::default()
                 });
         }

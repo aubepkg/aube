@@ -131,6 +131,7 @@ impl Resolver {
     /// peers when `auto_install_peers` is on, and applies peer-context
     /// suffixes. Returns the post-peer-context graph ready for lockfile
     /// emission.
+    #[allow(clippy::too_many_arguments)]
     fn finalize_resolved_graph(
         &self,
         importers: BTreeMap<String, Vec<DirectDep>>,
@@ -139,6 +140,7 @@ impl Resolver {
         resolved_times: BTreeMap<String, String>,
         skipped_optional_dependencies: BTreeMap<String, BTreeMap<String, String>>,
         catalog_picks: BTreeMap<String, BTreeMap<String, String>>,
+        workspace_links: BTreeMap<String, String>,
     ) -> Result<LockfileGraph, Error> {
         let resolved_catalogs =
             catalog::materialize_catalog_picks(catalog_picks, resolved_versions);
@@ -153,6 +155,7 @@ impl Resolver {
                 // resolver never populates URLs itself. Install flips this
                 // on after the graph is built when the setting is active.
                 lockfile_include_tarball_url: false,
+                extra: self.lockfile_settings_extra.clone(),
             },
             // Stamp the pnpm-canonical override values into the output graph so
             // the writer and the next install's drift check see the same shape.
@@ -187,6 +190,7 @@ impl Resolver {
             dedupe_peers: self.dedupe_peers,
             resolve_from_workspace_root: self.resolve_peers_from_workspace_root,
             peers_suffix_max_length: self.peers_suffix_max_length,
+            workspace_links,
         };
         let _diag_peer =
             aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "peer_context_apply");

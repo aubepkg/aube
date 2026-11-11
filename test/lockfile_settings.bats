@@ -613,3 +613,151 @@ NODE
 	assert_success
 	assert_dir_exists node_modules/is-odd
 }
+
+@test "fresh pnpm-lock.yaml records configured pnpm settings" {
+	cat >package.json <<-'EOF2'
+		{
+		  "name": "test-pnpm-settings",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1" }
+		}
+	EOF2
+	cat >pnpm-workspace.yaml <<-'EOF2'
+		injectWorkspacePackages: true
+		addMissingPeerTypes: true
+		dedupePeers: true
+		peersSuffixMaxLength: 500
+	EOF2
+	printf 'default-lockfile-format=pnpm\n' >>.npmrc
+	run aube install --no-frozen-lockfile
+	assert_success
+	run sed -n '/^settings:/,/^$/{/^$/!p;}' pnpm-lock.yaml
+	assert_success
+	assert_output "settings:
+  addMissingPeerTypes: true
+  autoInstallPeers: true
+  dedupePeers: true
+  excludeLinksFromLockfile: false
+  injectWorkspacePackages: true
+  peersSuffixMaxLength: 500"
+}
+
+@test "lockfile.includeResolutionSettings writes the resolution settings snapshot" {
+	cat >package.json <<-'EOF2'
+		{
+		  "name": "test-pnpm-resolution-settings",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1" }
+		}
+	EOF2
+	cat >pnpm-workspace.yaml <<-'EOF2'
+		lockfile:
+		  includeResolutionSettings: true
+		linkWorkspacePackages: deep
+	EOF2
+	printf 'default-lockfile-format=pnpm\n' >>.npmrc
+	run aube install --no-frozen-lockfile
+	assert_success
+	run sed -n '/^settings:/,/^$/{/^$/!p;}' pnpm-lock.yaml
+	assert_success
+	assert_output "settings:
+  autoDedupe: false
+  autoInstallPeers: true
+  dedupeInjectedDeps: true
+  dedupePeerDependents: true
+  excludeLinksFromLockfile: false
+  linkWorkspacePackages: deep"
+}
+
+@test "aube add rewrites pnpm-lock.yaml settings after a config change" {
+	cat >package.json <<-'EOF2'
+		{
+		  "name": "test-pnpm-settings-change",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1" }
+		}
+	EOF2
+	printf 'default-lockfile-format=pnpm\n' >>.npmrc
+	printf 'dedupePeers: true\npeersSuffixMaxLength: 500\n' >pnpm-workspace.yaml
+	run aube install --no-frozen-lockfile
+	assert_success
+	run grep -c 'dedupePeers: true' pnpm-lock.yaml
+	assert_output 1
+
+	printf 'injectWorkspacePackages: true\n' >pnpm-workspace.yaml
+	run aube add is-number@7.0.0
+	assert_success
+	run sed -n '/^settings:/,/^$/{/^$/!p;}' pnpm-lock.yaml
+	assert_success
+	assert_output "settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+  injectWorkspacePackages: true"
+}
+
+@test "a config-only change refreshes pnpm-lock.yaml settings on install" {
+	cat >package.json <<-'EOF2'
+		{
+		  "name": "test-pnpm-settings-config-only",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1" }
+		}
+	EOF2
+	printf 'default-lockfile-format=pnpm\n' >>.npmrc
+	run aube install --no-frozen-lockfile
+	assert_success
+	run grep -c injectWorkspacePackages pnpm-lock.yaml
+	assert_output 0
+
+	printf 'injectWorkspacePackages: true\n' >pnpm-workspace.yaml
+	run aube install
+	assert_success
+	run grep 'injectWorkspacePackages: true' pnpm-lock.yaml
+	assert_success
+
+	printf 'addMissingPeerTypes: true\n' >pnpm-workspace.yaml
+	run aube install --lockfile-only
+	assert_success
+	run grep 'addMissingPeerTypes: true' pnpm-lock.yaml
+	assert_success
+	run grep -c injectWorkspacePackages pnpm-lock.yaml
+	assert_output 0
+}
+
+@test "remove re-resolves when a setting changed since pnpm-lock.yaml was written" {
+	cat >package.json <<-'EOF2'
+		{
+		  "name": "test-pnpm-settings-remove",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1", "is-number": "6.0.0" }
+		}
+	EOF2
+	printf 'default-lockfile-format=pnpm\n' >>.npmrc
+	run aube install --no-frozen-lockfile
+	assert_success
+
+	printf 'peersSuffixMaxLength: 500\n' >pnpm-workspace.yaml
+	run aube remove is-number
+	assert_success
+	refute_output --partial "Pruned lockfile"
+	run grep 'peersSuffixMaxLength: 500' pnpm-lock.yaml
+	assert_success
+}
+
+@test "frozen install rejects a pnpm-lock.yaml whose settings no longer match config" {
+	cat >package.json <<-'EOF2'
+		{
+		  "name": "test-pnpm-settings-frozen",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1" }
+		}
+	EOF2
+	printf 'default-lockfile-format=pnpm\n' >>.npmrc
+	printf 'dedupePeers: true\n' >pnpm-workspace.yaml
+	run aube install --no-frozen-lockfile
+	assert_success
+	rm pnpm-workspace.yaml
+	run aube install --frozen-lockfile
+	assert_failure
+	assert_output --partial "ERR_AUBE_LOCKFILE_CONFIG_MISMATCH"
+}
