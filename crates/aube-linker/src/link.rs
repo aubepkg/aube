@@ -1724,11 +1724,24 @@ impl Linker {
             let link_parent = target_dir.parent().unwrap_or(&hidden);
             let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
                 .unwrap_or_else(|| source_dir.clone());
-            if reconcile_dir_link(&target_dir, &rel_target)? {
-                return Ok(());
+            // The shared GVS mirror can be linked by other processes at
+            // the same time. A missing link may appear between reconcile
+            // and create (`AlreadyExists`), so re-reconcile: an identical
+            // winner is kept, a different one is replaced. Bounded so two
+            // projects that keep flipping one name still terminate.
+            let mut attempts = 0;
+            loop {
+                if reconcile_dir_link(&target_dir, &rel_target)? {
+                    return Ok(());
+                }
+                match sys::create_dir_link(&rel_target, &target_dir) {
+                    Ok(()) => break,
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempts < 8 => {
+                        attempts += 1;
+                    }
+                    Err(e) => return Err(Error::Io(target_dir.clone(), e)),
+                }
             }
-            sys::create_dir_link(&rel_target, &target_dir)
-                .map_err(|e| Error::Io(target_dir.clone(), e))?;
             trace!("hidden-hoist: {}", pkg.name);
             // Intentionally not counted in `stats.top_level_linked`.
             // That counter reflects the user-visible root

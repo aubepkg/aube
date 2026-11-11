@@ -1687,6 +1687,41 @@ fn test_global_virtual_store_hidden_hoist_prunes_only_dead_entries() {
     assert!(hidden.join("bar").symlink_metadata().unwrap().is_symlink());
 }
 
+/// Several projects installing against one global virtual store link the
+/// shared hidden hoist at the same time. Losing the create to another
+/// process must not fail with `File exists`.
+#[test]
+fn test_concurrent_projects_share_gvs_hidden_hoist_without_collision() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, indices) = setup_store_with_files(dir.path());
+    let graph = make_graph();
+    let hidden = store.virtual_store_dir().join("node_modules");
+    let threads = 8;
+
+    for round in 0..20 {
+        let _ = std::fs::remove_dir_all(&hidden);
+        let barrier = std::sync::Barrier::new(threads);
+        std::thread::scope(|s| {
+            let handles: Vec<_> = (0..threads)
+                .map(|i| {
+                    let project = dir.path().join(format!("project-{round}-{i}"));
+                    std::fs::create_dir_all(&project).unwrap();
+                    let (store, indices, graph, barrier) = (&store, &indices, &graph, &barrier);
+                    s.spawn(move || {
+                        let linker = Linker::new_with_gvs(store, LinkStrategy::Copy, true);
+                        barrier.wait();
+                        linker.link_all(&project, graph, indices).map(|_| ())
+                    })
+                })
+                .collect();
+            for h in handles {
+                h.join().unwrap().expect("concurrent link must not fail");
+            }
+        });
+        assert!(hidden.join("bar").symlink_metadata().unwrap().is_symlink());
+    }
+}
+
 #[test]
 fn test_global_virtual_store_hidden_hoist_disabled_keeps_live_shared_links() {
     let dir = tempfile::tempdir().unwrap();
