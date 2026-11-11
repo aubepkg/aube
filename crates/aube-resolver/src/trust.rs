@@ -218,6 +218,20 @@ pub fn strongest_prior_evidence(
     best
 }
 
+/// Whether `current` is weaker than `prior` enough to count as a downgrade.
+///
+/// Staged publish needs a human to approve each release, so a maintainer
+/// who automates releases has to move to trusted publishing. Staged publish
+/// followed by a trusted publisher with provenance is therefore accepted,
+/// a deliberate divergence from pnpm. Dropping to provenance alone, to no
+/// evidence, or going from trusted publisher to a weaker source still fails.
+fn is_downgrade(current: Option<TrustEvidence>, prior: TrustEvidence) -> bool {
+    if prior == TrustEvidence::StagedPublish && current == Some(TrustEvidence::TrustedPublisher) {
+        return false;
+    }
+    current.map_or(0, TrustEvidence::rank) < prior.rank()
+}
+
 /// Run the trust-downgrade check. Returns `Ok(())` when the picked
 /// version is acceptable (excluded, missing-evidence-everywhere, older
 /// than `ignore_after_minutes`, or carrying evidence at least as strong
@@ -277,8 +291,7 @@ pub fn check_no_downgrade(
     };
 
     let current = evidence_for(picked_meta);
-    let current_rank = current.map_or(0, TrustEvidence::rank);
-    if current_rank < prior.evidence.rank() {
+    if is_downgrade(current, prior.evidence) {
         return Err(TrustCheckError::Downgrade(TrustDowngradeDetails {
             name: packument.name.clone(),
             picked_version: picked_version.to_string(),
@@ -451,7 +464,7 @@ fn check_no_downgrade_over_history<'a>(
     let Some(prior) = strongest else {
         return Ok(());
     };
-    if picked_evidence.map_or(0, TrustEvidence::rank) < prior.evidence.rank() {
+    if is_downgrade(picked_evidence, prior.evidence) {
         return Err(TrustCheckError::Downgrade(TrustDowngradeDetails {
             name: name.to_string(),
             picked_version: picked_version.to_string(),
@@ -1323,6 +1336,62 @@ mod tests {
     }
 
     #[test]
+    fn history_allows_staged_publish_to_trusted_publisher_but_not_provenance_only() {
+        let provenance = || aube_registry::VersionTrustDist {
+            attestations: Some(Attestations {
+                provenance: Some(serde_json::json!({
+                    "predicateType": "https://slsa.dev/provenance/v1"
+                })),
+            }),
+        };
+        let staged = aube_registry::VersionTrustMetadata {
+            npm_user: Some(NpmUser {
+                approver: Some(serde_json::json!({"name": "maintainer"})),
+                trusted_publisher: None,
+            }),
+            dist: None,
+        };
+        let trusted = aube_registry::VersionTrustMetadata {
+            npm_user: Some(NpmUser {
+                approver: None,
+                trusted_publisher: Some(serde_json::json!({"id": "github"})),
+            }),
+            dist: Some(provenance()),
+        };
+        let provenance_only = aube_registry::VersionTrustMetadata {
+            npm_user: None,
+            dist: Some(provenance()),
+        };
+        let history =
+            |latest: &aube_registry::VersionTrustMetadata| aube_registry::PackumentTrustHistory {
+                time: BTreeMap::from([
+                    ("1.0.0".to_string(), "2025-01-01T00:00:00.000Z".to_string()),
+                    ("2.0.0".to_string(), "2025-02-01T00:00:00.000Z".to_string()),
+                ]),
+                versions: BTreeMap::from([
+                    ("1.0.0".to_string(), staged.clone()),
+                    ("2.0.0".to_string(), latest.clone()),
+                ]),
+            };
+        let check = |latest: &aube_registry::VersionTrustMetadata| {
+            check_no_downgrade_history(
+                "foo",
+                &history(latest),
+                "2.0.0",
+                latest,
+                &TrustExcludeRules::default(),
+                None,
+            )
+        };
+
+        check(&trusted).expect("staged publish → trusted publisher is not a downgrade");
+        assert!(matches!(
+            check(&provenance_only),
+            Err(TrustCheckError::Downgrade(_))
+        ));
+    }
+
+    #[test]
     fn standalone_history_detects_downgrade_and_skips_picked_version() {
         let trust_meta =
             |dist: Option<aube_registry::VersionTrustDist>| aube_registry::VersionTrustMetadata {
@@ -1413,7 +1482,7 @@ mod tests {
     }
 
     #[test]
-    fn downgrade_staged_publish_to_trusted_publisher_fails() {
+    fn staged_publish_to_trusted_publisher_with_provenance_passes() {
         let p = packument(
             "foo",
             vec![
@@ -1431,16 +1500,31 @@ mod tests {
             ],
         );
         let picked = p.versions.get("3.0.0").unwrap();
+        check_no_downgrade(&p, "3.0.0", picked, &TrustExcludeRules::default(), None)
+            .expect("staged publish → trusted publisher is not a downgrade");
+    }
+
+    #[test]
+    fn downgrade_staged_publish_to_provenance_only_fails() {
+        let p = packument(
+            "foo",
+            vec![
+                (
+                    "2.0.0",
+                    "2025-02-01T00:00:00.000Z",
+                    with_staged_publish(version("foo", "2.0.0")),
+                ),
+                (
+                    "3.0.0",
+                    "2025-03-01T00:00:00.000Z",
+                    with_provenance(version("foo", "3.0.0")),
+                ),
+            ],
+        );
+        let picked = p.versions.get("3.0.0").unwrap();
         let err = check_no_downgrade(&p, "3.0.0", picked, &TrustExcludeRules::default(), None)
-            .expect_err("staged publish → trusted publisher is a downgrade");
-        match err {
-            TrustCheckError::Downgrade(d) => {
-                assert_eq!(d.prior_evidence, TrustEvidence::StagedPublish);
-                assert_eq!(d.prior_version, "2.0.0");
-                assert_eq!(d.current_evidence, Some(TrustEvidence::TrustedPublisher));
-            }
-            _ => panic!("expected Downgrade"),
-        }
+            .expect_err("staged publish → provenance only is a downgrade");
+        assert!(matches!(err, TrustCheckError::Downgrade(_)));
     }
 
     #[test]

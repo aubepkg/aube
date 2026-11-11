@@ -776,7 +776,9 @@ Recognized evidence: npm staged-publish approval metadata (`_npmUser.approver`)
 outranks structured npm trusted-publisher metadata
 (`_npmUser.trustedPublisher.id`, counted only when the version also has
 provenance), which outranks structured SLSA provenance
-metadata (`dist.attestations.provenance.predicateType`). Set to `off` to
+metadata (`dist.attestations.provenance.predicateType`). Moving from staged
+publish approval to a trusted publisher with provenance is not treated as a
+downgrade, since staged publishing cannot be automated. Set to `off` to
 disable, or use `trustPolicyExclude` to whitelist specific packages or
 versions. This policy validates registry metadata shape; it does not
 cryptographically verify the attached attestation bundle.
