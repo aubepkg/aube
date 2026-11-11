@@ -3755,6 +3755,25 @@ fn detect_unmet_peers_flags_version_mismatch() {
     assert_eq!(u.found.as_deref(), Some("15.7.0"));
 }
 
+// A prerelease provider satisfies a range its base release satisfies.
+#[test]
+fn detect_unmet_peers_accepts_prerelease_of_in_range_base() {
+    let mut consumer = mk_locked(
+        "consumer",
+        "1.0.0",
+        &[("react", "19.0.0-rc.1")],
+        &[("react", "^18 || ^19")],
+    );
+    consumer.dep_path = "consumer@1.0.0(react@19.0.0-rc.1)".to_string();
+    let mut packages = BTreeMap::new();
+    packages.insert(consumer.dep_path.clone(), consumer);
+    let graph = LockfileGraph {
+        packages,
+        ..Default::default()
+    };
+    assert!(detect_unmet_peers(&graph).is_empty());
+}
+
 // When the resolved version *does* satisfy the declared range, no
 // warning should fire.
 #[test]
@@ -8007,5 +8026,51 @@ async fn primer_backed_resolve_yields_yarn_classic_shasum_fragment() {
     assert!(
         written.contains(&format!(".tgz#{shasum}\"")),
         "yarn.lock lacks the sha1 fragment:\n{written}"
+    );
+}
+
+// pnpm treats a prerelease provider as its base release, so a supplied
+// `react@19.0.0-rc.1` must satisfy `^19.0.0` during provider selection.
+#[test]
+fn apply_peer_contexts_selects_prerelease_provider_for_in_range_base() {
+    let react = mk_locked("react", "19.0.0-rc.1", &[], &[]);
+    // react-dom carries its own stable react, so only a prerelease-aware
+    // ancestor match can pick the root's prerelease over it.
+    let stable = mk_locked("react", "19.0.0", &[], &[]);
+    let dom = mk_locked(
+        "react-dom",
+        "19.0.0",
+        &[("react", "19.0.0")],
+        &[("react", "^19.0.0")],
+    );
+    let mut packages = BTreeMap::new();
+    packages.insert("react@19.0.0".to_string(), stable);
+    packages.insert("react@19.0.0-rc.1".to_string(), react);
+    packages.insert("react-dom@19.0.0".to_string(), dom);
+    let importers = BTreeMap::from([(
+        ".".to_string(),
+        [("react", "19.0.0-rc.1"), ("react-dom", "19.0.0")]
+            .into_iter()
+            .map(|(name, version)| DirectDep {
+                name: name.to_string(),
+                dep_path: format!("{name}@{version}"),
+                dep_type: DepType::Production,
+                specifier: Some(version.to_string()),
+            })
+            .collect(),
+    )]);
+    let graph = LockfileGraph {
+        importers,
+        packages,
+        ..Default::default()
+    };
+    let out = apply_peer_contexts(graph, &PeerContextOptions::default())
+        .expect("test graph should converge");
+    assert!(
+        out.packages
+            .keys()
+            .any(|k| k.starts_with("react-dom@19.0.0(react@19.0.0-rc.1)")),
+        "prerelease provider should be wired as the peer: {:?}",
+        out.packages.keys().collect::<Vec<_>>()
     );
 }
