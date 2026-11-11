@@ -147,6 +147,71 @@ fn apply_with_eof_context(
     diffy::apply(original, &annotated)
 }
 
+/// Apply a patch whose context or removed lines differ from the file only in
+/// trailing whitespace (editors and pre-commit hooks strip it from committed
+/// `.patch` files). Mirrors pnpm's tolerant applier: each hunk is located by
+/// comparing lines with trailing whitespace trimmed, trying the recorded
+/// position first and then up to 20 lines either side, and context lines keep
+/// the file's own bytes.
+fn apply_trailing_whitespace_tolerant(
+    original: &str,
+    patch: &diffy::Patch<'_, str>,
+) -> Option<String> {
+    let lines: Vec<&str> = original.split_inclusive('\n').collect();
+    let trimmed = |line: &str| line.trim_end().to_string();
+    let mut out = String::with_capacity(original.len());
+    let mut cursor = 0_usize;
+    for hunk in patch.hunks() {
+        let range = hunk.old_range();
+        let base = if range.is_empty() {
+            range.start()
+        } else {
+            range.start().saturating_sub(1)
+        };
+        let expected: Vec<String> = hunk
+            .lines()
+            .iter()
+            .filter_map(|line| match line {
+                diffy::Line::Context(text) | diffy::Line::Delete(text) => Some(trimmed(text)),
+                diffy::Line::Insert(_) => None,
+            })
+            .collect();
+        let position = std::iter::once(0_isize)
+            .chain((1..=20).flat_map(|offset| [-offset, offset]))
+            .filter_map(|offset| base.checked_add_signed(offset))
+            .filter(|&position| position >= cursor)
+            .find(|&position| {
+                lines
+                    .get(position..position + expected.len())
+                    .is_some_and(|window| {
+                        window
+                            .iter()
+                            .map(|line| trimmed(line))
+                            .eq(expected.iter().cloned())
+                    })
+            })?;
+        for line in &lines[cursor..position] {
+            out.push_str(line);
+        }
+        let mut at = position;
+        for line in hunk.lines() {
+            match line {
+                diffy::Line::Context(_) => {
+                    out.push_str(lines[at]);
+                    at += 1;
+                }
+                diffy::Line::Delete(_) => at += 1,
+                diffy::Line::Insert(text) => out.push_str(text),
+            }
+        }
+        cursor = at;
+    }
+    for line in &lines[cursor..] {
+        out.push_str(line);
+    }
+    Some(out)
+}
+
 /// Apply a multi-file unified diff to a package directory.
 ///
 /// The patch text is split on git-style or plain unified-diff file
@@ -269,8 +334,11 @@ pub(crate) fn apply_multi_file_patch(pkg_dir: &Path, patch_text: &str) -> Result
         };
         let parsed = diffy::Patch::from_str(&section.body)
             .map_err(|e| format!("failed to parse patch for {rel}: {e}"))?;
-        let patched_lf = apply_with_eof_context(&normalized, &parsed)
-            .map_err(|e| format!("failed to apply patch for {rel}: {e}"))?;
+        let patched_lf = match apply_with_eof_context(&normalized, &parsed) {
+            Ok(patched) => patched,
+            Err(e) => apply_trailing_whitespace_tolerant(&normalized, &parsed)
+                .ok_or_else(|| format!("failed to apply patch for {rel}: {e}"))?,
+        };
         let patched = if was_crlf {
             // Promote bare `\n` to `\r\n`, then collapse any `\r\r\n`
             // back so a patch line containing a literal `\r` byte (rare
@@ -600,6 +668,26 @@ mod tests {
     }
 
     #[test]
+    fn tolerates_trailing_whitespace_lost_from_context_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "head \nold \t\nend\n").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,3 +1,3 @@\n head\n-old\n+new\n end\n";
+        apply_multi_file_patch(dir.path(), patch).unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("a.txt")).unwrap(),
+            b"head \nnew\nend\n"
+        );
+    }
+
+    #[test]
+    fn tolerant_apply_still_rejects_content_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "head \nwrong\nend\n").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,3 +1,3 @@\n head\n-old\n+new\n end\n";
+        assert!(apply_multi_file_patch(dir.path(), patch).is_err());
+    }
+
+    #[test]
     fn applies_plain_unified_patch() {
         let dir = tempfile::tempdir().unwrap();
         let pkg = dir.path().join("pkg");
@@ -824,7 +912,7 @@ mod tests {
     #[test]
     fn eof_context_tolerance_does_not_hide_content_mismatches() {
         let dir = tempfile::tempdir().unwrap();
-        for original in ["wrong\nend", "old\nwrong", "old\nend "] {
+        for original in ["wrong\nend", "old\nwrong"] {
             std::fs::write(dir.path().join("index.js"), original).unwrap();
             let patch = "diff --git a/index.js b/index.js\n\
                          --- a/index.js\n\
