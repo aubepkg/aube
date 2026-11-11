@@ -781,6 +781,7 @@ fn apply_peer_contexts_once(
         name_index.entry(pkg.name.as_str()).or_default().push(pkg);
     }
 
+    let independent_packages = independently_reachable_packages(&canonical);
     let cyclic_peer_identities = cyclic_peer_identities(&canonical);
 
     // Root-importer scope used by `resolve-peers-from-workspace-root`.
@@ -826,6 +827,7 @@ fn apply_peer_contexts_once(
                 &dep.dep_path,
                 &canonical,
                 &name_index,
+                &independent_packages,
                 &importer_scope,
                 &root_scope,
                 &mut out_packages,
@@ -1766,6 +1768,48 @@ fn apply_dedupe_peers_to_tail(tail: &str) -> String {
 /// the consumer chain again. Membership is per graph key, peer context
 /// included: a cycle through one `host@1` context says nothing about
 /// another `host@1` context or about `host@2`.
+/// Reach the graph through real declarations, excluding remembered optional-peer
+/// bindings so those bindings cannot establish their own independent providers.
+pub(crate) fn independently_reachable_packages(graph: &LockfileGraph) -> FxHashSet<String> {
+    let mut pending: Vec<_> = graph
+        .importers
+        .values()
+        .flatten()
+        .filter_map(|dep| {
+            if graph.packages.contains_key(&dep.dep_path) {
+                return Some(dep.dep_path.clone());
+            }
+            let tail = dep.dep_path.strip_prefix(&format!("{}@", dep.name))?;
+            aube_lockfile::resolve_dep_edge(&dep.name, tail, |key| graph.packages.contains_key(key))
+        })
+        .collect();
+    let mut reached = FxHashSet::default();
+    while let Some(key) = pending.pop() {
+        let Some(pkg) = graph.packages.get(&key) else {
+            continue;
+        };
+        if !reached.insert(key) {
+            continue;
+        }
+        for (name, tail) in &pkg.dependencies {
+            if pkg
+                .peer_dependencies_meta
+                .get(name)
+                .is_some_and(|meta| meta.optional)
+                && !pkg.declared_dependencies.contains_key(name)
+            {
+                continue;
+            }
+            if let Some(child) =
+                aube_lockfile::resolve_dep_edge(name, tail, |key| graph.packages.contains_key(key))
+            {
+                pending.push(child);
+            }
+        }
+    }
+    reached
+}
+
 fn cyclic_peer_identities(graph: &LockfileGraph) -> FxHashSet<String> {
     let nodes: Vec<&LockedPackage> = graph.packages.values().collect();
     let index_of: FxHashMap<&str, usize> = graph
@@ -1866,6 +1910,7 @@ fn visit_peer_context<'g>(
     input_dep_path: &str,
     graph: &'g LockfileGraph,
     name_index: &FxHashMap<&'g str, Vec<&'g LockedPackage>>,
+    independent_packages: &FxHashSet<String>,
     ancestor_scope: &FxHashMap<String, PeerProvider>,
     root_scope: &FxHashMap<String, PeerProvider>,
     out_packages: &mut BTreeMap<String, LockedPackage>,
@@ -2011,11 +2056,12 @@ fn visit_peer_context<'g>(
         // from `new_dependencies`. The semver check is against the
         // package's canonical `version` field, not the tail, because
         // the tail may carry a peer suffix that isn't valid semver.
-        let from_graph_scan = || {
+        let from_graph_scan = |independent_only: bool| {
             name_index
                 .get(peer_name.as_str())
                 .into_iter()
                 .flat_map(|bucket| bucket.iter().copied())
+                .filter(|p| !independent_only || independent_packages.contains(&p.dep_path))
                 .filter(|p| version_satisfies(&p.version, declared_range))
                 .filter_map(|p| {
                     let tail = p
@@ -2049,8 +2095,31 @@ fn visit_peer_context<'g>(
             .peer_dependencies_meta
             .get(peer_name)
             .is_some_and(|m| m.optional);
+        // A retained pure optional-peer edge is a fallback for the current
+        // ancestor scope, including an incompatible newly provided version.
+        // A declared dependency still takes precedence over incompatible peers.
+        let optional_only = is_optional && !pkg.declared_dependencies.contains_key(peer_name);
+        let from_optional_ancestor = optional_only
+            .then(|| from_ancestor_incompatible.clone())
+            .flatten();
+        // pnpm replaces an optional-only lockfile provider with a compatible
+        // real dependency from any importer, even with peer deduplication
+        // off. An independently reachable old provider keeps its binding.
+        let from_retained_replacement = if optional_only
+            && pkg.dependencies.get(peer_name).is_some_and(|tail| {
+                aube_lockfile::resolve_dep_edge(peer_name, tail, |key| {
+                    graph.packages.contains_key(key)
+                })
+                .is_some_and(|key| !independent_packages.contains(&key))
+            }) {
+            from_graph_scan(true)
+        } else {
+            None
+        };
         let resolved = if is_optional {
-            from_ancestor
+            from_optional_ancestor
+                .or(from_retained_replacement)
+                .or(from_ancestor)
                 .or(from_pkg_deps)
                 .or(from_ancestor_incompatible)
                 .or(from_pkg_deps_incompatible)
@@ -2059,7 +2128,7 @@ fn visit_peer_context<'g>(
                 .or_else(|| {
                     options
                         .dedupe_peer_dependents
-                        .then(from_graph_scan)
+                        .then(|| from_graph_scan(false))
                         .flatten()
                 })
         } else {
@@ -2068,7 +2137,7 @@ fn visit_peer_context<'g>(
                 .or(from_ancestor_incompatible)
                 .or(from_pkg_deps_incompatible)
                 .or(from_root)
-                .or_else(from_graph_scan)
+                .or_else(|| from_graph_scan(false))
                 .or(from_root_incompatible)
         };
         if let Some(provider) = resolved {
@@ -2194,6 +2263,7 @@ fn visit_peer_context<'g>(
             &child_canonical_dep_path,
             graph,
             name_index,
+            independent_packages,
             &child_scope,
             root_scope,
             out_packages,
@@ -2226,6 +2296,7 @@ fn visit_peer_context<'g>(
             &child_canonical_dep_path,
             graph,
             name_index,
+            independent_packages,
             &child_scope,
             root_scope,
             out_packages,
