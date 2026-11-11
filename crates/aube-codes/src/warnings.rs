@@ -84,6 +84,7 @@ pub const WARN_AUBE_HTTP_RETRY_BODY_DECODE: &str = "WARN_AUBE_HTTP_RETRY_BODY_DE
 pub const WARN_AUBE_PACKUMENT_CACHE_WRITE: &str = "WARN_AUBE_PACKUMENT_CACHE_WRITE";
 pub const WARN_AUBE_SLOW_METADATA: &str = "WARN_AUBE_SLOW_METADATA";
 pub const WARN_AUBE_SLOW_TARBALL: &str = "WARN_AUBE_SLOW_TARBALL";
+pub const WARN_AUBE_DNS_HICKORY_TIMEOUT: &str = "WARN_AUBE_DNS_HICKORY_TIMEOUT";
 
 // ── registry TLS / proxy config ─────────────────────────────────────
 pub const WARN_AUBE_INVALID_HTTPS_PROXY: &str = "WARN_AUBE_INVALID_HTTPS_PROXY";
@@ -501,6 +502,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_SLOW_TARBALL,
         category: category::REGISTRY_PERF,
         description: "A tarball download fell below `fetchMinSpeedKiBps`.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_DNS_HICKORY_TIMEOUT,
+        category: category::REGISTRY_PERF,
+        description: "The in-process DNS resolver timed out, so aube switched to the system resolver for the rest of the run.",
         exit_code: None,
     },
     // Registry TLS / proxy

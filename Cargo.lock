@@ -412,6 +412,7 @@ dependencies = [
  "blake3",
  "bytes",
  "flate2",
+ "hickory-resolver",
  "miette",
  "node-semver",
  "proptest",

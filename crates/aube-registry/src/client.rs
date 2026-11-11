@@ -7,6 +7,8 @@ mod access;
 mod body;
 mod cache;
 mod dist_tags;
+#[cfg(feature = "hickory-dns")]
+mod dns;
 mod endpoints;
 mod http;
 mod lifecycle;
