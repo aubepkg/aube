@@ -488,6 +488,15 @@ pub(super) fn select_lockfile_result(
                          help: run without --frozen-lockfile to update the lockfile"
                     ));
                 }
+                if let DriftStatus::Stale { reason } =
+                    graph.check_settings_drift(lockfile_settings_extra, kind)
+                {
+                    return Err(miette!(
+                        code = aube_codes::errors::ERR_AUBE_LOCKFILE_CONFIG_MISMATCH,
+                        "lockfile is out of date with the current settings: {reason}\n\
+                         help: run without --frozen-lockfile to update the lockfile"
+                    ));
+                }
                 if let DriftStatus::Stale { reason } = graph
                     .check_drift_workspace_with_local_targets_for_kind(
                         manifests,

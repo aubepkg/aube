@@ -743,3 +743,21 @@ NODE
 	run grep 'peersSuffixMaxLength: 500' pnpm-lock.yaml
 	assert_success
 }
+
+@test "frozen install rejects a pnpm-lock.yaml whose settings no longer match config" {
+	cat >package.json <<-'EOF2'
+		{
+		  "name": "test-pnpm-settings-frozen",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1" }
+		}
+	EOF2
+	printf 'default-lockfile-format=pnpm\n' >>.npmrc
+	printf 'dedupePeers: true\n' >pnpm-workspace.yaml
+	run aube install --no-frozen-lockfile
+	assert_success
+	rm pnpm-workspace.yaml
+	run aube install --frozen-lockfile
+	assert_failure
+	assert_output --partial "ERR_AUBE_LOCKFILE_CONFIG_MISMATCH"
+}
