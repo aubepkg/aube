@@ -30,6 +30,9 @@ pub struct UnmetPeer {
     pub from_dep_path: String,
     /// Human-friendly package name (pre-context) for display.
     pub from_name: String,
+    /// The declaring package's own version (its manifest version, which a
+    /// local `file:`/`link:` dep_path does not encode).
+    pub from_version: String,
     /// Name of the peer being declared (e.g. `"react"`).
     pub peer_name: String,
     /// The declared peer range from the package's packument
@@ -40,6 +43,15 @@ pub struct UnmetPeer {
     /// auto-install path usually drags *some* version in, but it can
     /// happen for corner cases.
     pub found: Option<String>,
+}
+
+/// pnpm retries a rejected prerelease provider as its base release, so
+/// `19.0.0-rc.1` satisfies `^19.0.0` for peer checks and provider selection.
+fn peer_version_satisfies(version: &str, range: &str) -> bool {
+    version_satisfies(version, range)
+        || version
+            .split_once(['-', '+'])
+            .is_some_and(|(base, _)| version_satisfies(base, range))
 }
 
 /// Scan the resolved graph and return every declared required peer whose
@@ -96,7 +108,7 @@ pub fn detect_unmet_peers(graph: &LockfileGraph) -> Vec<UnmetPeer> {
 
             let satisfied = match &found_version {
                 Some(_) if local_provider.is_some_and(|p| p.version == "0.0.0") => true,
-                Some(v) => version_satisfies(v, declared_range),
+                Some(v) => peer_version_satisfies(v, declared_range),
                 None => false,
             };
             if satisfied {
@@ -106,6 +118,7 @@ pub fn detect_unmet_peers(graph: &LockfileGraph) -> Vec<UnmetPeer> {
             unmet.push(UnmetPeer {
                 from_dep_path: pkg.dep_path.clone(),
                 from_name: pkg.name.clone(),
+                from_version: pkg.version.clone(),
                 peer_name: peer_name.clone(),
                 declared: declared_range.clone(),
                 found: found_version,
@@ -2128,7 +2141,7 @@ fn visit_peer_context<'g>(
             // The tail may carry a nested peer suffix on fixed-point
             // iterations 2+; strip it before checking the semver.
             let canonical = canonical_tail(&provider.context_tail);
-            version_satisfies(canonical, declared_range)
+            peer_version_satisfies(canonical, declared_range)
         };
 
         let from_ancestor = ancestor_scope
@@ -2191,7 +2204,7 @@ fn visit_peer_context<'g>(
                     !(options.workspace_links.contains_key(&p.name)
                         && matches!(p.local_source, Some(LocalSource::Link(_))))
                 })
-                .filter(|p| version_satisfies(&p.version, declared_range))
+                .filter(|p| peer_version_satisfies(&p.version, declared_range))
                 .filter_map(|p| {
                     let tail = p
                         .dep_path
