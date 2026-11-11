@@ -147,6 +147,89 @@ fn apply_with_eof_context(
     diffy::apply(original, &annotated)
 }
 
+/// Apply a patch whose context or removed lines differ from the file only in
+/// trailing whitespace (editors and pre-commit hooks strip it from committed
+/// `.patch` files). Mirrors pnpm's tolerant applier: each hunk is located by
+/// comparing lines with trailing whitespace trimmed, trying the recorded
+/// position first and then up to 20 lines either side, and context lines keep
+/// the file's own bytes.
+fn apply_trailing_whitespace_tolerant(
+    original: &str,
+    patch: &diffy::Patch<'_, str>,
+) -> Option<String> {
+    let lines: Vec<&str> = original.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(original.len());
+    let mut cursor = 0_usize;
+    let hunk_count = patch.hunks().len();
+    for (hunk_index, hunk) in patch.hunks().iter().enumerate() {
+        let range = hunk.old_range();
+        let base = if range.is_empty() {
+            range.start()
+        } else {
+            range.start().saturating_sub(1)
+        };
+        let expected: Vec<&str> = hunk
+            .lines()
+            .iter()
+            .filter_map(|line| match line {
+                diffy::Line::Context(text) | diffy::Line::Delete(text) => Some(*text),
+                diffy::Line::Insert(_) => None,
+            })
+            .collect();
+        // Only an unterminated last file line may match a terminated hunk
+        // line (never the reverse, which an explicit "No newline" marker
+        // forbids), and only when nothing is appended after it, otherwise the
+        // appended text would be joined onto that line. It must also be the
+        // last hunk, or a later hunk could still append at EOF.
+        let nothing_appended = hunk_index + 1 == hunk_count
+            && !matches!(hunk.lines().last(), Some(diffy::Line::Insert(_)));
+        let matches_at = |position: usize| {
+            let Some(end) = position.checked_add(expected.len()) else {
+                return false;
+            };
+            let Some(window) = lines.get(position..end) else {
+                return false;
+            };
+            window
+                .iter()
+                .zip(&expected)
+                .enumerate()
+                .all(|(i, (file, want))| {
+                    file.trim_end() == want.trim_end()
+                        && (file.ends_with('\n') == want.ends_with('\n')
+                            || (nothing_appended
+                                && !file.ends_with('\n')
+                                && i + 1 == expected.len()
+                                && position + i + 1 == lines.len()))
+                })
+        };
+        let position = std::iter::once(0_isize)
+            .chain((1..=20).flat_map(|offset| [-offset, offset]))
+            .filter_map(|offset| base.checked_add_signed(offset))
+            .filter(|&position| position >= cursor)
+            .find(|&position| matches_at(position))?;
+        for line in &lines[cursor..position] {
+            out.push_str(line);
+        }
+        let mut at = position;
+        for line in hunk.lines() {
+            match line {
+                diffy::Line::Context(_) => {
+                    out.push_str(lines[at]);
+                    at += 1;
+                }
+                diffy::Line::Delete(_) => at += 1,
+                diffy::Line::Insert(text) => out.push_str(text),
+            }
+        }
+        cursor = at;
+    }
+    for line in &lines[cursor..] {
+        out.push_str(line);
+    }
+    Some(out)
+}
+
 /// Apply a multi-file unified diff to a package directory.
 ///
 /// The patch text is split on git-style or plain unified-diff file
@@ -269,8 +352,11 @@ pub(crate) fn apply_multi_file_patch(pkg_dir: &Path, patch_text: &str) -> Result
         };
         let parsed = diffy::Patch::from_str(&section.body)
             .map_err(|e| format!("failed to parse patch for {rel}: {e}"))?;
-        let patched_lf = apply_with_eof_context(&normalized, &parsed)
-            .map_err(|e| format!("failed to apply patch for {rel}: {e}"))?;
+        let patched_lf = match apply_with_eof_context(&normalized, &parsed) {
+            Ok(patched) => patched,
+            Err(e) => apply_trailing_whitespace_tolerant(&normalized, &parsed)
+                .ok_or_else(|| format!("failed to apply patch for {rel}: {e}"))?,
+        };
         let patched = if was_crlf {
             // Promote bare `\n` to `\r\n`, then collapse any `\r\r\n`
             // back so a patch line containing a literal `\r` byte (rare
@@ -600,6 +686,79 @@ mod tests {
     }
 
     #[test]
+    fn tolerates_trailing_whitespace_lost_from_context_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "head \nold \t\nend\n").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,3 +1,3 @@\n head\n-old\n+new\n end\n";
+        apply_multi_file_patch(dir.path(), patch).unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("a.txt")).unwrap(),
+            b"head \nnew\nend\n"
+        );
+    }
+
+    #[test]
+    fn tolerant_apply_does_not_join_unterminated_last_line_with_appended_text() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "old\nend").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,3 @@\n-old\n+new\n end\n+added\n";
+        assert!(apply_multi_file_patch(dir.path(), patch).is_err());
+    }
+
+    #[test]
+    fn tolerant_apply_combines_eof_context_with_trailing_whitespace() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "old \nend").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old\n+new\n end\n";
+        apply_multi_file_patch(dir.path(), patch).unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("a.txt")).unwrap(),
+            b"new\nend"
+        );
+    }
+
+    #[test]
+    fn tolerant_apply_rejects_hunk_headers_near_usize_max() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "old\n").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -18446744073709551615 +1 @@\n-old \n+new\n";
+        assert!(apply_multi_file_patch(dir.path(), patch).is_err());
+    }
+
+    #[test]
+    fn tolerant_apply_rejects_no_newline_marker_against_terminated_file_line() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "head \nend\n").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n head\n-end\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n";
+        assert!(apply_multi_file_patch(dir.path(), patch).is_err());
+    }
+
+    #[test]
+    fn tolerant_apply_rejects_no_newline_marker_on_final_context_line() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "old\nhead \nend\n").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,3 +1,3 @@\n-old\n+new\n head\n end\n\\ No newline at end of file\n";
+        assert!(apply_multi_file_patch(dir.path(), patch).is_err());
+    }
+
+    #[test]
+    fn tolerant_apply_does_not_join_later_hunk_onto_tolerated_eof_line() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "old \nend").unwrap();
+        let patch =
+            "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old\n+new\n end\n@@ -3,0 +3,1 @@\n+tail\n";
+        assert!(apply_multi_file_patch(dir.path(), patch).is_err());
+    }
+
+    #[test]
+    fn tolerant_apply_still_rejects_content_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "head \nwrong\nend\n").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,3 +1,3 @@\n head\n-old\n+new\n end\n";
+        assert!(apply_multi_file_patch(dir.path(), patch).is_err());
+    }
+
+    #[test]
     fn applies_plain_unified_patch() {
         let dir = tempfile::tempdir().unwrap();
         let pkg = dir.path().join("pkg");
@@ -824,7 +983,7 @@ mod tests {
     #[test]
     fn eof_context_tolerance_does_not_hide_content_mismatches() {
         let dir = tempfile::tempdir().unwrap();
-        for original in ["wrong\nend", "old\nwrong", "old\nend "] {
+        for original in ["wrong\nend", "old\nwrong"] {
             std::fs::write(dir.path().join("index.js"), original).unwrap();
             let patch = "diff --git a/index.js b/index.js\n\
                          --- a/index.js\n\
