@@ -731,6 +731,14 @@ mod tests {
     }
 
     #[test]
+    fn tolerant_apply_rejects_no_newline_marker_on_final_context_line() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "old\nhead \nend\n").unwrap();
+        let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,3 +1,3 @@\n-old\n+new\n head\n end\n\\ No newline at end of file\n";
+        assert!(apply_multi_file_patch(dir.path(), patch).is_err());
+    }
+
+    #[test]
     fn tolerant_apply_still_rejects_content_mismatch() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.txt"), "head \nwrong\nend\n").unwrap();
