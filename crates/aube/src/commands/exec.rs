@@ -200,7 +200,7 @@ async fn run_filtered_parallel(
     if !shell_mode {
         for pkg in &matched {
             let bin_path = bin_path_for_project(&pkg.dir, bin);
-            if !bin_path.exists() {
+            if !bin_available(&pkg.dir, &bin_path, bin) {
                 let name = pkg
                     .name
                     .as_deref()
@@ -329,7 +329,7 @@ pub(crate) async fn exec_bin_with_node_args(
     node_args: &[String],
     shell_mode: bool,
 ) -> miette::Result<Option<i32>> {
-    if !shell_mode && !bin_path.exists() {
+    if !shell_mode && !bin_available(cwd, bin_path, bin) {
         return Err(bin_not_found_error(bin));
     }
 
@@ -367,7 +367,7 @@ pub(crate) async fn exec_bin_terminal(
     #[cfg(unix)]
     if !aube_util::is_embedded() {
         use std::os::unix::process::CommandExt;
-        if !shell_mode && !bin_path.exists() {
+        if !shell_mode && !bin_available(cwd, bin_path, bin) {
             return Err(bin_not_found_error(bin));
         }
         let mut command = build_bin_command(cwd, bin_path, bin, args, &[], shell_mode);
@@ -402,6 +402,53 @@ fn project_bin_dirs(cwd: &Path) -> Vec<PathBuf> {
     dirs
 }
 
+/// Whether `bin` can run from `cwd`: a project `.bin` entry, or (like pnpm)
+/// any command on the PATH the child will get. Project bins win because
+/// they come first in that PATH.
+fn bin_available(cwd: &Path, bin_path: &Path, bin: &str) -> bool {
+    bin_path.exists() || find_on_path(cwd, bin).is_some()
+}
+
+fn find_on_path(cwd: &Path, bin: &str) -> Option<PathBuf> {
+    if bin.is_empty() || bin.contains(['/', std::path::MAIN_SEPARATOR]) {
+        return None;
+    }
+    let path_dirs = crate::runtime::user_command_path_entries(project_bin_dirs(cwd));
+    let path = aube_scripts::prepend_paths(&path_dirs);
+    std::env::split_paths(&path)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .flat_map(|dir| {
+            let plain = dir.join(bin);
+            #[cfg(windows)]
+            let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT".into());
+            #[cfg(windows)]
+            let with_ext = exts
+                .split(';')
+                .filter(|e| !e.is_empty())
+                .map(|e| dir.join(format!("{bin}{e}")))
+                .collect::<Vec<_>>();
+            #[cfg(not(windows))]
+            let with_ext = Vec::new();
+            std::iter::once(plain).chain(with_ext)
+        })
+        .find(|candidate| is_executable_file(candidate))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.is_file() && meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        meta.is_file()
+    }
+}
+
 fn bin_path_for_project(cwd: &Path, bin: &str) -> PathBuf {
     let local = super::project_modules_dir(cwd).join(".bin").join(bin);
     let dirs = project_bin_dirs(cwd);
@@ -431,6 +478,12 @@ pub(crate) fn build_bin_command(
                 .collect::<Vec<_>>()
                 .join(" ");
             aube_scripts::spawn_shell(&line)
+        } else if !bin_path.exists() {
+            // Not a project bin: the caller verified it resolves on PATH, and
+            // the PATH set below is what the child lookup uses.
+            let mut cmd = tokio::process::Command::new(bin);
+            cmd.args(args);
+            cmd
         } else {
             let exec_path = resolve_exec_shim(bin_path);
             let mut cmd = tokio::process::Command::new(exec_path);
@@ -467,11 +520,8 @@ pub(crate) async fn exec_bin_status_with_node_args(
     shell_mode: bool,
     output_mode: &super::run_output::OutputMode,
 ) -> miette::Result<std::process::ExitStatus> {
-    if !shell_mode && !bin_path.exists() {
-        return Err(miette!(
-            "binary not found: {bin}\nTry running `{}` first, or check that the package providing '{bin}' is in your dependencies.",
-            aube_util::cmd("install")
-        ));
+    if !shell_mode && !bin_available(cwd, bin_path, bin) {
+        return Err(bin_not_found_error(bin));
     }
 
     let command = build_bin_command(cwd, bin_path, bin, args, node_args, shell_mode);
@@ -698,6 +748,45 @@ mod tests {
         build_bin_command, is_native_executable, is_native_magic, is_node_backed_bin,
         resolve_exec_shim, resolved_bin_command,
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn path_commands_are_available_when_no_project_bin_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = super::bin_path_for_project(tmp.path(), "sh");
+        assert!(!missing.exists());
+        assert!(super::bin_available(tmp.path(), &missing, "sh"));
+        let nope = super::bin_path_for_project(tmp.path(), "aube-no-such-cmd-1947");
+        assert!(!super::bin_available(
+            tmp.path(),
+            &nope,
+            "aube-no-such-cmd-1947"
+        ));
+        assert!(super::find_on_path(tmp.path(), "../sh").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_bin_wins_over_path_command() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let bin_dir = tmp.path().join("node_modules/.bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let local = bin_dir.join("sh");
+        std::fs::write(&local, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&local, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(super::find_on_path(tmp.path(), "sh"), Some(local.clone()));
+        assert_eq!(super::bin_path_for_project(tmp.path(), "sh"), local);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_project_bin_runs_by_name_through_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("node_modules/.bin/sh");
+        let command = build_bin_command(tmp.path(), &missing, "sh", &[], &[], false);
+        assert_eq!(command.as_std().get_program(), "sh");
+    }
 
     #[cfg(unix)]
     #[tokio::test]
