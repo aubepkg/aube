@@ -1336,6 +1336,62 @@ mod tests {
     }
 
     #[test]
+    fn history_allows_staged_publish_to_trusted_publisher_but_not_provenance_only() {
+        let provenance = || aube_registry::VersionTrustDist {
+            attestations: Some(Attestations {
+                provenance: Some(serde_json::json!({
+                    "predicateType": "https://slsa.dev/provenance/v1"
+                })),
+            }),
+        };
+        let staged = aube_registry::VersionTrustMetadata {
+            npm_user: Some(NpmUser {
+                approver: Some(serde_json::json!({"name": "maintainer"})),
+                trusted_publisher: None,
+            }),
+            dist: None,
+        };
+        let trusted = aube_registry::VersionTrustMetadata {
+            npm_user: Some(NpmUser {
+                approver: None,
+                trusted_publisher: Some(serde_json::json!({"id": "github"})),
+            }),
+            dist: Some(provenance()),
+        };
+        let provenance_only = aube_registry::VersionTrustMetadata {
+            npm_user: None,
+            dist: Some(provenance()),
+        };
+        let history =
+            |latest: &aube_registry::VersionTrustMetadata| aube_registry::PackumentTrustHistory {
+                time: BTreeMap::from([
+                    ("1.0.0".to_string(), "2025-01-01T00:00:00.000Z".to_string()),
+                    ("2.0.0".to_string(), "2025-02-01T00:00:00.000Z".to_string()),
+                ]),
+                versions: BTreeMap::from([
+                    ("1.0.0".to_string(), staged.clone()),
+                    ("2.0.0".to_string(), latest.clone()),
+                ]),
+            };
+        let check = |latest: &aube_registry::VersionTrustMetadata| {
+            check_no_downgrade_history(
+                "foo",
+                &history(latest),
+                "2.0.0",
+                latest,
+                &TrustExcludeRules::default(),
+                None,
+            )
+        };
+
+        check(&trusted).expect("staged publish → trusted publisher is not a downgrade");
+        assert!(matches!(
+            check(&provenance_only),
+            Err(TrustCheckError::Downgrade(_))
+        ));
+    }
+
+    #[test]
     fn standalone_history_detects_downgrade_and_skips_picked_version() {
         let trust_meta =
             |dist: Option<aube_registry::VersionTrustDist>| aube_registry::VersionTrustMetadata {
