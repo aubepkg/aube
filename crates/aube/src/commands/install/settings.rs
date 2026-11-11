@@ -1429,12 +1429,7 @@ impl PeerDependencyRules {
             return true;
         }
         if let Some(found) = u.found.as_deref()
-            && self.allowed_versions_permit(
-                &u.from_name,
-                &version_from_dep_path(&u.from_dep_path, &u.from_name),
-                &u.peer_name,
-                found,
-            )
+            && self.allowed_versions_permit(&u.from_name, &u.from_version, &u.peer_name, found)
         {
             return true;
         }
@@ -1671,6 +1666,7 @@ mod peer_dependency_rules_tests {
         aube_resolver::UnmetPeer {
             from_dep_path: format!("{parent}@0.0.0"),
             from_name: parent.to_string(),
+            from_version: "0.0.0".to_string(),
             peer_name: peer.to_string(),
             declared: declared.to_string(),
             found: found.map(String::from),
@@ -1742,15 +1738,23 @@ mod peer_dependency_rules_tests {
             "^18.0.0",
             Some("19.2.0"),
         );
-        u.from_dep_path = "use-sync-external-store@1.2.0(react@19.2.0)".to_string();
+        u.from_version = "1.2.0".to_string();
         assert!(r.silences(&u));
-        u.from_dep_path = "use-sync-external-store@2.0.0(react@19.2.0)".to_string();
+        u.from_version = "2.0.0".to_string();
         assert!(!r.silences(&u));
 
         let scoped = rules(&[], &[], &[("@scope/lib@^2>react", "19")]);
         let mut u = unmet("@scope/lib", "react", "^18.0.0", Some("19.0.0"));
-        u.from_dep_path = "@scope/lib@2.1.0".to_string();
+        u.from_version = "2.1.0".to_string();
         assert!(scoped.silences(&u));
+
+        // A local (`file:`) parent has no version in its dep_path; the
+        // manifest version still has to match the rule.
+        let local = rules(&[], &[], &[("consumer@1>react", "19")]);
+        let mut u = unmet("consumer", "react", "^18.0.0", Some("19.0.0"));
+        u.from_dep_path = "consumer@file+abc123".to_string();
+        u.from_version = "1.2.0".to_string();
+        assert!(local.silences(&u));
     }
 
     #[test]

@@ -30,6 +30,9 @@ pub struct UnmetPeer {
     pub from_dep_path: String,
     /// Human-friendly package name (pre-context) for display.
     pub from_name: String,
+    /// The declaring package's own version (its manifest version, which a
+    /// local `file:`/`link:` dep_path does not encode).
+    pub from_version: String,
     /// Name of the peer being declared (e.g. `"react"`).
     pub peer_name: String,
     /// The declared peer range from the package's packument
@@ -87,6 +90,7 @@ pub fn detect_unmet_peers(graph: &LockfileGraph) -> Vec<UnmetPeer> {
             unmet.push(UnmetPeer {
                 from_dep_path: pkg.dep_path.clone(),
                 from_name: pkg.name.clone(),
+                from_version: pkg.version.clone(),
                 peer_name: peer_name.clone(),
                 declared: declared_range.clone(),
                 found: found_version,
