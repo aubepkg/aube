@@ -153,6 +153,7 @@ impl Resolver {
                 // resolver never populates URLs itself. Install flips this
                 // on after the graph is built when the setting is active.
                 lockfile_include_tarball_url: false,
+                extra: self.lockfile_settings_extra.clone(),
             },
             // Stamp the pnpm-canonical override values into the output graph so
             // the writer and the next install's drift check see the same shape.

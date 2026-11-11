@@ -32,6 +32,7 @@ impl Resolver {
             packument_full_cache_dir: None,
             auto_install_peers: true,
             exclude_links_from_lockfile: false,
+            lockfile_settings_extra: BTreeMap::new(),
             supported_architectures: SupportedArchitectures::default(),
             overrides: BTreeMap::new(),
             override_rules: Vec::new(),
@@ -78,6 +79,7 @@ impl Resolver {
                 packument_full_cache_dir: None,
                 auto_install_peers: true,
                 exclude_links_from_lockfile: false,
+                lockfile_settings_extra: BTreeMap::new(),
                 supported_architectures: SupportedArchitectures::default(),
                 overrides: BTreeMap::new(),
                 override_rules: Vec::new(),
@@ -237,6 +239,16 @@ impl Resolver {
     /// importer entries on write.
     pub fn with_exclude_links_from_lockfile(mut self, value: bool) -> Self {
         self.exclude_links_from_lockfile = value;
+        self
+    }
+
+    /// Set the lockfile `settings:` entries derived from the current
+    /// configuration that aube does not model as typed fields.
+    pub fn with_lockfile_settings_extra(
+        mut self,
+        value: BTreeMap<String, serde_json::Value>,
+    ) -> Self {
+        self.lockfile_settings_extra = value;
         self
     }
 

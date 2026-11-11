@@ -980,16 +980,7 @@ pub fn write_with_project_root(
 
     let lockfile = WritablePnpmLockfile {
         lockfile_version: "9.0".to_string(),
-        settings: WritableSettings {
-            auto_install_peers: graph.settings.auto_install_peers,
-            exclude_links_from_lockfile: graph.settings.exclude_links_from_lockfile,
-            lockfile_include_tarball_url: graph.settings.lockfile_include_tarball_url,
-            extra: if native_pnpm_aliases {
-                existing_unmodeled_settings(path)
-            } else {
-                BTreeMap::new()
-            },
-        },
+        settings: writable_settings(&graph.settings, path, native_pnpm_aliases),
         catalogs,
         // Skipped at serialization time when empty so the YAML stays
         // byte-identical to a no-overrides install.
@@ -1116,7 +1107,7 @@ fn pruned_time_entries(
 #[serde(rename_all = "camelCase")]
 struct WritablePnpmLockfile {
     lockfile_version: String,
-    settings: WritableSettings,
+    settings: BTreeMap<String, serde_json::Value>,
     /// pnpm v9 emits a top-level `catalogs:` map immediately after
     /// `settings:` and before `overrides:` — see pnpm's
     /// `sortLockfileKeys` ROOT_KEYS order (lockfileVersion, settings,
@@ -1172,20 +1163,37 @@ struct WritablePnpmLockfile {
     snapshots: BTreeMap<String, WritableSnapshot>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WritableSettings {
-    auto_install_peers: bool,
-    exclude_links_from_lockfile: bool,
-    /// Skipped at serialization time when false so pnpm-parity
-    /// projects that don't opt into the tarball-URL recording keep
-    /// byte-identical lockfiles.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    lockfile_include_tarball_url: bool,
-    /// Settings aube doesn't model (pnpm's `peersSuffixMaxLength`, …),
-    /// written back verbatim into pnpm-lock.yaml.
-    #[serde(flatten)]
-    extra: BTreeMap<String, serde_json::Value>,
+/// Build the `settings:` header the way pnpm 12 does: every key sorted
+/// alphabetically, with `autoInstallPeers` and `excludeLinksFromLockfile`
+/// always present and the rest (pnpm-lock.yaml only) only when the current
+/// configuration put them in `graph.settings.extra`.
+///
+/// Entries of the lockfile being replaced survive only when aube does not
+/// derive them from configuration ([`crate::DERIVED_PNPM_SETTING_KEYS`]),
+/// so a changed config never keeps a stale value.
+fn writable_settings(
+    settings: &crate::LockfileSettings,
+    path: &Path,
+    native_pnpm: bool,
+) -> BTreeMap<String, serde_json::Value> {
+    let mut out = BTreeMap::new();
+    if native_pnpm {
+        out = existing_unmodeled_settings(path);
+        out.retain(|key, _| !crate::DERIVED_PNPM_SETTING_KEYS.contains(&key.as_str()));
+        out.extend(settings.extra.clone());
+    }
+    out.insert(
+        "autoInstallPeers".into(),
+        settings.auto_install_peers.into(),
+    );
+    out.insert(
+        "excludeLinksFromLockfile".into(),
+        settings.exclude_links_from_lockfile.into(),
+    );
+    if settings.lockfile_include_tarball_url {
+        out.insert("lockfileIncludeTarballUrl".into(), true.into());
+    }
+    out
 }
 
 /// `settings:` entries of the lockfile being replaced that aube doesn't

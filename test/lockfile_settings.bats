@@ -613,3 +613,84 @@ NODE
 	assert_success
 	assert_dir_exists node_modules/is-odd
 }
+
+@test "fresh pnpm-lock.yaml records configured pnpm settings" {
+	cat >package.json <<-'EOF2'
+		{
+		  "name": "test-pnpm-settings",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1" }
+		}
+	EOF2
+	cat >pnpm-workspace.yaml <<-'EOF2'
+		injectWorkspacePackages: true
+		addMissingPeerTypes: true
+		dedupePeers: true
+		peersSuffixMaxLength: 500
+	EOF2
+	printf 'default-lockfile-format=pnpm\n' >>.npmrc
+	run aube install --no-frozen-lockfile
+	assert_success
+	run sed -n '/^settings:/,/^$/{/^$/!p;}' pnpm-lock.yaml
+	assert_success
+	assert_output "settings:
+  addMissingPeerTypes: true
+  autoInstallPeers: true
+  dedupePeers: true
+  excludeLinksFromLockfile: false
+  injectWorkspacePackages: true
+  peersSuffixMaxLength: 500"
+}
+
+@test "lockfile.includeResolutionSettings writes the resolution settings snapshot" {
+	cat >package.json <<-'EOF2'
+		{
+		  "name": "test-pnpm-resolution-settings",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1" }
+		}
+	EOF2
+	cat >pnpm-workspace.yaml <<-'EOF2'
+		lockfile:
+		  includeResolutionSettings: true
+		linkWorkspacePackages: deep
+	EOF2
+	printf 'default-lockfile-format=pnpm\n' >>.npmrc
+	run aube install --no-frozen-lockfile
+	assert_success
+	run sed -n '/^settings:/,/^$/{/^$/!p;}' pnpm-lock.yaml
+	assert_success
+	assert_output "settings:
+  autoDedupe: false
+  autoInstallPeers: true
+  dedupeInjectedDeps: true
+  dedupePeerDependents: true
+  excludeLinksFromLockfile: false
+  linkWorkspacePackages: deep"
+}
+
+@test "aube add rewrites pnpm-lock.yaml settings after a config change" {
+	cat >package.json <<-'EOF2'
+		{
+		  "name": "test-pnpm-settings-change",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1" }
+		}
+	EOF2
+	printf 'default-lockfile-format=pnpm\n' >>.npmrc
+	printf 'dedupePeers: true\npeersSuffixMaxLength: 500\n' >pnpm-workspace.yaml
+	run aube install --no-frozen-lockfile
+	assert_success
+	run grep -c 'dedupePeers: true' pnpm-lock.yaml
+	assert_output 1
+
+	printf 'injectWorkspacePackages: true\n' >pnpm-workspace.yaml
+	run aube add is-number@7.0.0
+	assert_success
+	run sed -n '/^settings:/,/^$/{/^$/!p;}' pnpm-lock.yaml
+	assert_success
+	assert_output "settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+  injectWorkspacePackages: true"
+}

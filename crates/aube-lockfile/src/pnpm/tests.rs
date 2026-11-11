@@ -2538,6 +2538,7 @@ fn exclude_links_from_lockfile_drops_link_deps_from_importer() {
             auto_install_peers: true,
             exclude_links_from_lockfile: true,
             lockfile_include_tarball_url: false,
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -5605,7 +5606,7 @@ fn pnpm_lock_keeps_unmodeled_settings_and_local_tarball_metadata() {
     let path = dir.path().join("pnpm-lock.yaml");
     std::fs::write(
         &path,
-        "lockfileVersion: '9.0'\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n  peersSuffixMaxLength: 80\nimporters:\n  .: {}\n",
+        "lockfileVersion: '9.0'\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n  futureSetting: 80\nimporters:\n  .: {}\n",
     )
     .unwrap();
     let mut graph = LockfileGraph::default();
@@ -5635,7 +5636,7 @@ fn pnpm_lock_keeps_unmodeled_settings_and_local_tarball_metadata() {
     write_with_project_root(&path, dir.path(), &graph, &PackageJson::default()).unwrap();
     let out: yaml_serde::Value =
         yaml_serde::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(out["settings"]["peersSuffixMaxLength"].as_u64(), Some(80));
+    assert_eq!(out["settings"]["futureSetting"].as_u64(), Some(80));
     let package = &out["packages"]["bundler@file:deps/bundler.tgz"];
     assert_eq!(package["version"].as_str(), Some("1.0.0"));
     assert_eq!(
@@ -6003,4 +6004,98 @@ snapshots:
         !written.contains("peerDependenciesMeta"),
         "peerDependenciesMeta must be omitted when nothing is optional; got:\n{written}"
     );
+}
+
+fn settings_header(path: &Path) -> String {
+    let yaml = std::fs::read_to_string(path).unwrap();
+    let start = yaml.find("settings:\n").unwrap();
+    yaml[start..].split("\n\n").next().unwrap().to_string()
+}
+
+#[test]
+fn pnpm_settings_follow_current_config_and_drop_stale_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(
+        &path,
+        "lockfileVersion: '9.0'\nsettings:\n  autoInstallPeers: true\n  dedupePeers: true\n  excludeLinksFromLockfile: false\n  futureSetting: 1\n  peersSuffixMaxLength: 80\nimporters:\n  .: {}\n",
+    )
+    .unwrap();
+    let mut graph = LockfileGraph::default();
+    graph
+        .settings
+        .extra
+        .insert("injectWorkspacePackages".into(), true.into());
+    write_with_project_root(&path, dir.path(), &graph, &PackageJson::default()).unwrap();
+    // dedupePeers and peersSuffixMaxLength were reset in config, so they go;
+    // futureSetting is unknown to aube and survives; keys sort like pnpm's.
+    assert_eq!(
+        settings_header(&path),
+        "settings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n  futureSetting: 1\n  injectWorkspacePackages: true"
+    );
+}
+
+#[test]
+fn fresh_pnpm_lockfile_writes_resolution_settings_in_pnpm_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    let mut graph = LockfileGraph::default();
+    for (key, value) in [
+        ("linkWorkspacePackages", serde_json::json!("deep")),
+        ("peersSuffixMaxLength", serde_json::json!(500)),
+        ("dedupePeerDependents", serde_json::json!(true)),
+        ("autoDedupe", serde_json::json!(false)),
+        ("addMissingPeerTypes", serde_json::json!(true)),
+    ] {
+        graph.settings.extra.insert(key.into(), value);
+    }
+    write_with_project_root(&path, dir.path(), &graph, &PackageJson::default()).unwrap();
+    assert_eq!(
+        settings_header(&path),
+        "settings:\n  addMissingPeerTypes: true\n  autoDedupe: false\n  autoInstallPeers: true\n  dedupePeerDependents: true\n  excludeLinksFromLockfile: false\n  linkWorkspacePackages: deep\n  peersSuffixMaxLength: 500"
+    );
+}
+
+fn derived_settings()
+-> impl proptest::strategy::Strategy<Value = BTreeMap<String, serde_json::Value>> {
+    use proptest::prelude::*;
+    let flag = |key: &'static str| {
+        proptest::option::of(any::<bool>())
+            .prop_map(move |v| v.map(|b| (key, serde_json::json!(b))))
+    };
+    (
+        flag("addMissingPeerTypes"),
+        flag("autoDedupe"),
+        flag("dedupeInjectedDeps"),
+        flag("dedupePeerDependents"),
+        flag("dedupePeers"),
+        flag("injectWorkspacePackages"),
+        proptest::option::of(prop_oneof![
+            any::<bool>().prop_map(|b| serde_json::json!(b)),
+            Just(serde_json::json!("deep")),
+        ])
+        .prop_map(|v| v.map(|v| ("linkWorkspacePackages", v))),
+        proptest::option::of(1u64..5000)
+            .prop_map(|v| v.map(|n| ("peersSuffixMaxLength", serde_json::json!(n)))),
+    )
+        .prop_map(|(a, b, c, d, e, f, g, h)| {
+            [a, b, c, d, e, f, g, h]
+                .into_iter()
+                .flatten()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect()
+        })
+}
+
+proptest::proptest! {
+    #[test]
+    fn pnpm_derived_settings_roundtrip_through_write_and_parse(extra in derived_settings()) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pnpm-lock.yaml");
+        let mut graph = LockfileGraph::default();
+        graph.settings.extra = extra.clone();
+        write_with_project_root(&path, dir.path(), &graph, &PackageJson::default()).unwrap();
+        let parsed = parse(&path).unwrap();
+        proptest::prop_assert_eq!(parsed.settings.extra, extra);
+    }
 }

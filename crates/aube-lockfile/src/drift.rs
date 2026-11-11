@@ -2097,6 +2097,7 @@ mod drift_tests {
                 auto_install_peers: false,
                 exclude_links_from_lockfile: true,
                 lockfile_include_tarball_url: false,
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -2330,6 +2331,7 @@ mod drift_tests {
                 auto_install_peers: false,
                 exclude_links_from_lockfile: true,
                 lockfile_include_tarball_url: true,
+                ..Default::default()
             },
             ..Default::default()
         };
