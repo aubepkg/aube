@@ -625,12 +625,20 @@ pub fn fill_local_package_versions(graph: &mut LockfileGraph, base_dir: &Path) {
             .and_then(|manifest| manifest.get("version")?.as_str().map(str::to_string));
         match version {
             Some(version) => pkg.version = version,
-            None => tracing::debug!(
-                "no version in {}; keeping {} for {}",
-                manifest_path.display(),
-                pkg.version,
-                pkg.name
-            ),
+            None => {
+                tracing::debug!(
+                    "no version in {}; keeping {} for {}",
+                    manifest_path.display(),
+                    pkg.version,
+                    pkg.name
+                );
+                if pkg.version == "0.0.0" {
+                    pkg.extra_meta.insert(
+                        crate::EXTRA_UNKNOWN_VERSION.to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+                }
+            }
         }
     }
 }
@@ -771,6 +779,27 @@ mod tests {
             active_lockfile_path_selecting(dir.path(), Some(LockfileKind::Pnpm)),
             ("pnpm-lock.yaml".to_string(), None)
         );
+    }
+
+    #[test]
+    fn local_package_without_a_manifest_version_is_marked_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("noversion")).unwrap();
+        std::fs::write(tmp.path().join("noversion/package.json"), "{}").unwrap();
+        let mut graph = crate::LockfileGraph::default();
+        graph.packages.insert(
+            "noversion@link+x".to_string(),
+            LockedPackage {
+                name: "noversion".to_string(),
+                version: "0.0.0".to_string(),
+                dep_path: "noversion@link+x".to_string(),
+                local_source: Some(LocalSource::Link(PathBuf::from("noversion"))),
+                ..Default::default()
+            },
+        );
+        super::fill_local_package_versions(&mut graph, tmp.path());
+        let pkg = &graph.packages["noversion@link+x"];
+        assert!(pkg.extra_meta.contains_key(crate::EXTRA_UNKNOWN_VERSION));
     }
 
     #[test]
