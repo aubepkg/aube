@@ -89,6 +89,15 @@ impl State {
     }
 }
 
+/// Marks a queued lookup as abandoned when the requesting future is dropped.
+struct CancelOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
 async fn system_lookup(host: &str) -> Result<Vec<SocketAddr>, std::io::Error> {
     let permit = SYSTEM_LOOKUPS
         .clone()
@@ -96,11 +105,17 @@ async fn system_lookup(host: &str) -> Result<Vec<SocketAddr>, std::io::Error> {
         .await
         .map_err(std::io::Error::other)?;
     let host = host.to_owned();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _on_drop = CancelOnDrop(cancelled.clone());
     // The permit moves into the blocking closure, so the slot stays taken
-    // until `getaddrinfo` actually returns, even if this future is
-    // dropped by a request timeout.
+    // until `getaddrinfo` actually returns, even if this future is dropped
+    // by a request timeout. A closure still queued behind a busy blocking
+    // pool when that happens skips the lookup and frees its slot at once.
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(Vec::new());
+        }
         std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 0)).map(Iterator::collect)
     })
     .await
@@ -144,12 +159,15 @@ impl Resolve for FallbackResolver {
         let (state, deadline) = (self.state.clone(), self.deadline);
         Box::pin(async move {
             let host = name.as_str();
-            let primary = state.hickory().map(|resolver| async move {
-                resolver
-                    .lookup_ip(host)
-                    .await
-                    .map(|lookup| lookup.iter().collect::<Vec<_>>())
-            });
+            let primary = (!state.use_system.load(Ordering::Relaxed))
+                .then(|| state.hickory())
+                .flatten()
+                .map(|resolver| async move {
+                    resolver
+                        .lookup_ip(host)
+                        .await
+                        .map(|lookup| lookup.iter().collect::<Vec<_>>())
+                });
             let addrs = resolve_with(&state, host, deadline, primary, system_lookup(host)).await?;
             Ok(Box::new(addrs.into_iter()) as Addrs)
         })
