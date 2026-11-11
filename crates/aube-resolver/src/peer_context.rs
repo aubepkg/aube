@@ -45,6 +45,15 @@ pub struct UnmetPeer {
     pub found: Option<String>,
 }
 
+/// pnpm retries a rejected prerelease provider as its base release, so
+/// `19.0.0-rc.1` satisfies `^19.0.0` for peer checks and provider selection.
+fn peer_version_satisfies(version: &str, range: &str) -> bool {
+    version_satisfies(version, range)
+        || version
+            .split_once(['-', '+'])
+            .is_some_and(|(base, _)| version_satisfies(base, range))
+}
+
 /// Scan the resolved graph and return every declared required peer whose
 /// resolved version doesn't satisfy its declared range. Optional peers
 /// (`peerDependenciesMeta.optional = true`) are skipped — pnpm treats
@@ -74,13 +83,7 @@ pub fn detect_unmet_peers(graph: &LockfileGraph) -> Vec<UnmetPeer> {
             let found_version = found_tail.map(|t| canonical_tail(t).to_string());
 
             let satisfied = match &found_version {
-                Some(v) => {
-                    // pnpm retries a rejected prerelease provider as its
-                    // base release, so `19.0.0-rc.1` satisfies `^19.0.0`.
-                    version_satisfies(v, declared_range)
-                        || v.split_once(['-', '+'])
-                            .is_some_and(|(base, _)| version_satisfies(base, declared_range))
-                }
+                Some(v) => peer_version_satisfies(v, declared_range),
                 None => false,
             };
             if satisfied {
@@ -1971,7 +1974,7 @@ fn visit_peer_context<'g>(
             // The tail may carry a nested peer suffix on fixed-point
             // iterations 2+; strip it before checking the semver.
             let canonical = canonical_tail(&provider.context_tail);
-            version_satisfies(canonical, declared_range)
+            peer_version_satisfies(canonical, declared_range)
         };
 
         let from_ancestor = ancestor_scope
@@ -2026,7 +2029,7 @@ fn visit_peer_context<'g>(
                 .get(peer_name.as_str())
                 .into_iter()
                 .flat_map(|bucket| bucket.iter().copied())
-                .filter(|p| version_satisfies(&p.version, declared_range))
+                .filter(|p| peer_version_satisfies(&p.version, declared_range))
                 .filter_map(|p| {
                     let tail = p
                         .dep_path
