@@ -448,8 +448,14 @@ fn is_executable_file(path: &Path) -> bool {
     };
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        meta.is_file() && meta.permissions().mode() & 0o111 != 0
+        use std::os::unix::ffi::OsStrExt;
+        // `access(X_OK)` honors the caller's own permissions, so another
+        // user's 0700 file is skipped like the normal command search does.
+        let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+            return false;
+        };
+        // SAFETY: `c_path` is a valid NUL-terminated string for the call.
+        meta.is_file() && unsafe { libc::access(c_path.as_ptr(), libc::X_OK) } == 0
     }
     #[cfg(not(unix))]
     {
