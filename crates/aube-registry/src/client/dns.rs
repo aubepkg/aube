@@ -12,17 +12,17 @@
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
 
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::LookupIpStrategy;
 
-/// How long hickory gets to answer before the OS resolver takes over.
-/// Shorter than hickory's own 5s-per-attempt default so a dead nameserver
-/// costs one short stall instead of several.
-const HICKORY_DEADLINE: Duration = Duration::from_secs(3);
+/// Upper bound on how long hickory gets to answer before the OS resolver
+/// takes over. Shorter than hickory's own 5s-per-attempt default so a dead
+/// nameserver costs one short stall instead of several.
+const MAX_HICKORY_DEADLINE: Duration = Duration::from_secs(3);
 
 #[derive(Default)]
 struct State {
@@ -32,9 +32,27 @@ struct State {
     use_system: AtomicBool,
 }
 
-#[derive(Clone, Default)]
+/// Shared by every client in the process, so a dead nameserver is
+/// discovered once rather than once per metadata / tarball / per-registry
+/// client.
+static SHARED: LazyLock<Arc<State>> = LazyLock::new(Arc::default);
+
+#[derive(Clone)]
 pub(super) struct FallbackResolver {
     state: Arc<State>,
+    deadline: Duration,
+}
+
+impl FallbackResolver {
+    /// `fetch_timeout` is the client's whole-request timeout. Hickory gets
+    /// at most half of it so the system fallback still has time to answer
+    /// before the request itself is cut off.
+    pub(super) fn shared(fetch_timeout: Duration) -> Self {
+        Self {
+            state: SHARED.clone(),
+            deadline: MAX_HICKORY_DEADLINE.min(fetch_timeout / 2),
+        }
+    }
 }
 
 impl State {
@@ -63,39 +81,50 @@ async fn system_lookup(host: &str) -> Result<Vec<SocketAddr>, std::io::Error> {
     Ok(tokio::net::lookup_host((host, 0)).await?.collect())
 }
 
-impl Resolve for FallbackResolver {
-    fn resolve(&self, name: Name) -> Resolving {
-        let state = self.state.clone();
-        Box::pin(async move {
-            let host = name.as_str();
-            if !state.use_system.load(Ordering::Relaxed)
-                && let Some(resolver) = state.hickory()
-            {
-                match tokio::time::timeout(HICKORY_DEADLINE, resolver.lookup_ip(host)).await {
-                    Ok(Ok(lookup)) => {
-                        let addrs: Vec<SocketAddr> = lookup
-                            .iter()
-                            .map(|ip: IpAddr| SocketAddr::new(ip, 0))
-                            .collect();
-                        if !addrs.is_empty() {
-                            return Ok(Box::new(addrs.into_iter()) as Addrs);
-                        }
-                    }
-                    Ok(Err(err)) => {
-                        tracing::debug!("hickory-dns lookup for {host} failed: {err}");
-                    }
-                    Err(_) => {
-                        if !state.use_system.swap(true, Ordering::Relaxed) {
-                            tracing::warn!(
-                                "hickory-dns lookup for {host} timed out; \
-                                 using the system resolver instead (is the nameserver in \
-                                 /etc/resolv.conf reachable?)"
-                            );
-                        }
-                    }
+/// Try `primary` within `deadline`, otherwise use `fallback`. A timeout
+/// (not an ordinary error) flips `use_system` for the rest of the process.
+async fn resolve_with<E: std::fmt::Display>(
+    state: &State,
+    host: &str,
+    deadline: Duration,
+    primary: Option<impl Future<Output = Result<Vec<IpAddr>, E>>>,
+    fallback: impl Future<Output = Result<Vec<SocketAddr>, std::io::Error>>,
+) -> Result<Vec<SocketAddr>, std::io::Error> {
+    if !state.use_system.load(Ordering::Relaxed)
+        && let Some(primary) = primary
+    {
+        match tokio::time::timeout(deadline, primary).await {
+            Ok(Ok(ips)) if !ips.is_empty() => {
+                return Ok(ips.into_iter().map(|ip| SocketAddr::new(ip, 0)).collect());
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => tracing::debug!("hickory-dns lookup for {host} failed: {err}"),
+            Err(_) => {
+                if !state.use_system.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        code = aube_codes::warnings::WARN_AUBE_DNS_HICKORY_TIMEOUT,
+                        "hickory-dns lookup for {host} timed out; using the system resolver \
+                         instead (is the nameserver in /etc/resolv.conf reachable?)"
+                    );
                 }
             }
-            let addrs = system_lookup(host).await?;
+        }
+    }
+    fallback.await
+}
+
+impl Resolve for FallbackResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let (state, deadline) = (self.state.clone(), self.deadline);
+        Box::pin(async move {
+            let host = name.as_str();
+            let primary = state.hickory().map(|resolver| async move {
+                resolver
+                    .lookup_ip(host)
+                    .await
+                    .map(|lookup| lookup.iter().collect::<Vec<_>>())
+            });
+            let addrs = resolve_with(&state, host, deadline, primary, system_lookup(host)).await?;
             Ok(Box::new(addrs.into_iter()) as Addrs)
         })
     }
@@ -104,17 +133,71 @@ impl Resolve for FallbackResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv4Addr;
+
+    const SYSTEM: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 0);
+
+    async fn system_stub() -> Result<Vec<SocketAddr>, std::io::Error> {
+        Ok(vec![SYSTEM])
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn timeout_switches_future_lookups_to_the_system_resolver() {
+        let state = State::default();
+        let hang = std::future::pending::<Result<Vec<IpAddr>, String>>();
+        let got = resolve_with(
+            &state,
+            "h",
+            Duration::from_secs(3),
+            Some(hang),
+            system_stub(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(got, vec![SYSTEM]);
+        assert!(state.use_system.load(Ordering::Relaxed));
+
+        // Hickory is no longer consulted, even though it would answer.
+        let ok = async { Ok::<_, String>(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]) };
+        let got = resolve_with(&state, "h", Duration::from_secs(3), Some(ok), system_stub())
+            .await
+            .unwrap();
+        assert_eq!(got, vec![SYSTEM]);
+    }
 
     #[tokio::test]
-    async fn resolves_through_system_resolver_once_hickory_is_disabled() {
-        let resolver = FallbackResolver::default();
-        resolver.state.use_system.store(true, Ordering::Relaxed);
-        let name: Name = "localhost".parse().unwrap();
-        let addrs: Vec<_> = resolver.resolve(name).await.unwrap().collect();
-        assert!(addrs.iter().any(|a| a.ip().is_loopback()));
-        assert!(
-            resolver.state.hickory.get().is_none(),
-            "hickory must not be built once the system resolver is selected"
-        );
+    async fn ordinary_error_falls_back_without_disabling_hickory() {
+        let state = State::default();
+        let fail = async { Err::<Vec<IpAddr>, _>("nxdomain".to_string()) };
+        let got = resolve_with(
+            &state,
+            "h",
+            Duration::from_secs(3),
+            Some(fail),
+            system_stub(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(got, vec![SYSTEM]);
+        assert!(!state.use_system.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn hickory_answer_is_used_when_it_succeeds() {
+        let state = State::default();
+        let ip = IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4));
+        let ok = async move { Ok::<_, String>(vec![ip]) };
+        let got = resolve_with(&state, "h", Duration::from_secs(3), Some(ok), system_stub())
+            .await
+            .unwrap();
+        assert_eq!(got, vec![SocketAddr::new(ip, 0)]);
+    }
+
+    #[test]
+    fn deadline_leaves_room_inside_a_short_fetch_timeout() {
+        let r = FallbackResolver::shared(Duration::from_secs(2));
+        assert_eq!(r.deadline, Duration::from_secs(1));
+        let r = FallbackResolver::shared(Duration::from_secs(300));
+        assert_eq!(r.deadline, MAX_HICKORY_DEADLINE);
     }
 }

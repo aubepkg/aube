@@ -259,8 +259,9 @@ fn build_http_client_inner(
     // the binary) can opt out; default features keep it on for aube.
     #[cfg(feature = "hickory-dns")]
     {
-        builder =
-            builder.dns_resolver(std::sync::Arc::new(super::dns::FallbackResolver::default()));
+        builder = builder.dns_resolver(std::sync::Arc::new(super::dns::FallbackResolver::shared(
+            timeout,
+        )));
     }
     builder = builder
         .tcp_keepalive(std::time::Duration::from_secs(60))

@@ -933,6 +933,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_DNS_HICKORY_TIMEOUT",
+      "category": "Registry caching / perf",
+      "description": "The in-process DNS resolver timed out, so aube switched to the system resolver for the rest of the run.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_INVALID_HTTPS_PROXY",
       "category": "Registry TLS / proxy",
       "description": "`https-proxy` URL didn't parse.",
