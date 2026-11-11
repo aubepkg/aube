@@ -110,8 +110,8 @@ pub async fn run(
     // Build and validate resolver configuration before persisting the
     // manifest mutation. A malformed policy must leave package.json and
     // the installed graph in their original, consistent state.
-    let shared_workspace =
-        super::shared_workspace_graph(&cwd)?.is_some_and(|(_, graph)| graph.importers.len() > 1);
+    let shared_workspace = super::shared_workspace_graph(&cwd)?
+        .is_some_and(|(root, graph)| root != cwd || graph.importers.len() > 1);
     let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
     let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs.clone())?;
 
