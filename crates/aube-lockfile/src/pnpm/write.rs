@@ -394,11 +394,14 @@ pub fn write_with_project_root(
                 .and_then(|p| p.local_source.as_ref())
             {
                 match local {
-                    // pnpm records a member's `link:` relative to the
-                    // member, a target an override set included; the graph
-                    // keeps it relative to the root.
+                    // pnpm records a member's `link:` and `workspace:` links
+                    // relative to the member (for `link:`, also a target
+                    // that an override supplied); the graph keeps them
+                    // relative to the root.
                     LocalSource::Link(path)
-                        if importer_path != "." && specifier.starts_with("link:") =>
+                        if importer_path != "."
+                            && (specifier.starts_with("link:")
+                                || specifier.starts_with("workspace:")) =>
                     {
                         format!(
                             "link:{}",

@@ -6108,3 +6108,46 @@ fn pnpm_branch_lockfiles_count_as_native_pnpm_names() {
     assert!(!is_pnpm_lockfile_name("aube-lock.yaml"));
     assert!(!is_pnpm_lockfile_name("pnpm-lock..yaml"));
 }
+
+/// Read a shared pnpm lockfile whose `member` importer links `b` through
+/// `workspace:*` at the member-relative `link`, write it back, and return
+/// the written text.
+fn rewrite_member_workspace_link(member: &str, link: &str) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(
+        &lockfile_path,
+        format!(
+            "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {{}}\n\n  {member}:\n    dependencies:\n      b:\n        specifier: workspace:*\n        version: {link}\n"
+        ),
+    )
+    .unwrap();
+    let graph = parse(&lockfile_path).unwrap();
+    write_with_project_root(&lockfile_path, dir.path(), &graph, &PackageJson::default()).unwrap();
+    std::fs::read_to_string(&lockfile_path).unwrap()
+}
+
+#[test]
+fn member_workspace_link_survives_read_and_write() {
+    let written = rewrite_member_workspace_link("apps/a", "link:../../packages/b");
+    assert!(
+        written.contains("version: link:../../packages/b"),
+        "member workspace link must stay member-relative, got:\n{written}"
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(32))]
+    #[test]
+    fn member_workspace_link_survives_read_and_write_at_any_depth(
+        member in proptest::collection::vec("m[a-z]{0,4}", 1..=3),
+        target in proptest::collection::vec("t[a-z]{0,4}", 1..=3),
+    ) {
+        // `m*` and `t*` segments never collide, so the target is outside
+        // the member and the member-relative path climbs to the root.
+        let link = format!("link:{}{}", "../".repeat(member.len()), target.join("/"));
+        let written = rewrite_member_workspace_link(&member.join("/"), &link);
+        let expected = format!("version: {link}\n");
+        proptest::prop_assert!(written.contains(&expected), "expected {}, got:\n{}", link, written);
+    }
+}
