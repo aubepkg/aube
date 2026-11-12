@@ -2699,26 +2699,36 @@ fn independent_locked_packages(
                     && (dep.specifier.as_deref() == Some(task.range.as_str())
                         || dep.specifier == lockfile_specifier)
             })
-        }) {
-            let key = if graph.packages.contains_key(&dep.dep_path) {
-                Some(dep.dep_path.clone())
-            } else {
-                // An npm alias in a pnpm importer can carry the registry
-                // package name in its tail. Resolve that stored edge too.
-                dep.dep_path
-                    .strip_prefix(&format!("{}@", dep.name))
-                    .and_then(|tail| {
-                        aube_lockfile::resolve_dep_edge(&dep.name, tail, |key| {
-                            graph.packages.contains_key(key)
-                        })
-                    })
-            };
-            if let Some(key) = key {
-                pending.push((key, task.dep_type == DepType::Optional));
-            }
+        }) && let Some(key) = locked_importer_dep_key(graph, dep)
+        {
+            pending.push((key, task.dep_type == DepType::Optional));
+        }
+    }
+    // Preserved importers keep their locked packages in the written lockfile.
+    for dep in resolver
+        .preserved_importers
+        .iter()
+        .filter_map(|importer| graph.importers.get(importer))
+        .flatten()
+    {
+        if let Some(key) = locked_importer_dep_key(graph, dep) {
+            pending.push((key, dep.dep_type == DepType::Optional));
         }
     }
     walk_independent_locked_packages(graph, pending, resolver)
+}
+
+fn locked_importer_dep_key(
+    graph: &LockfileGraph,
+    dep: &aube_lockfile::DirectDep,
+) -> Option<String> {
+    if graph.packages.contains_key(&dep.dep_path) {
+        return Some(dep.dep_path.clone());
+    }
+    // An npm alias in a pnpm importer can carry the registry package name in
+    // its tail. Resolve that stored edge too.
+    let tail = dep.dep_path.strip_prefix(&format!("{}@", dep.name))?;
+    aube_lockfile::resolve_dep_edge(&dep.name, tail, |key| graph.packages.contains_key(key))
 }
 
 /// pnpm keeps an existing optional-only provider on an unrelated add. A provider

@@ -37,6 +37,7 @@ impl Resolver {
             overrides: BTreeMap::new(),
             override_rules: Vec::new(),
             ignored_optional_dependencies: BTreeSet::new(),
+            preserved_importers: BTreeSet::new(),
             resolution_mode: ResolutionMode::Highest,
             project_root: PathBuf::from("."),
             ignore_scripts: false,
@@ -84,6 +85,7 @@ impl Resolver {
                 overrides: BTreeMap::new(),
                 override_rules: Vec::new(),
                 ignored_optional_dependencies: BTreeSet::new(),
+                preserved_importers: BTreeSet::new(),
                 resolution_mode: ResolutionMode::Highest,
                 project_root: PathBuf::from("."),
                 ignore_scripts: false,
@@ -305,6 +307,15 @@ impl Resolver {
     /// to both root and transitive optional deps. Empty by default.
     pub fn with_ignored_optional_dependencies(mut self, ignored: BTreeSet<String>) -> Self {
         self.ignored_optional_dependencies = ignored;
+        self
+    }
+
+    /// Name the importers of the existing lockfile that this resolve leaves
+    /// as they are, such as the other workspace members when `aube update`
+    /// resolves one member. Their locked packages can still provide
+    /// optional peers, so lockfile reuse keeps those peer bindings.
+    pub fn with_preserved_importers(mut self, importers: BTreeSet<String>) -> Self {
+        self.preserved_importers = importers;
         self
     }
 
