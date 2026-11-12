@@ -507,6 +507,13 @@ aube audit --json | jq    # machine-readable for CI
 Same advisory data source as `npm audit` and `pnpm audit`; same response
 schema.
 
+Only registry packages are sent to the advisory endpoint. Workspace, `file:`,
+`link:`, git, and tarball-URL dependencies are neither sent nor audited, so
+their names are not sent. Registry dependencies, including private ones, are
+sent by name. A tarball URL on your configured registry counts as a registry
+package and is still audited, provided it follows the registry's standard
+`<name>/-/<name>-<version>.tgz` layout for that package and version.
+
 ## Example strict policy
 
 For a project that has reviewed its dependency builds and can use the jail:

@@ -178,9 +178,25 @@ pub async fn run(args: AuditArgs) -> miette::Result<Option<i32>> {
 
     // Build the bulk request body: { name: [version, ...] } with versions
     // deduped so the registry doesn't do extra work on a diamond dep.
+    // Packages with a non-registry source (workspace, `link:`, `file:`,
+    // portal, exec, git, tarball URL) are left out, as pnpm does: sending
+    // them would leak private names and match same-named public advisories.
+    // A tarball URL on the `.npmrc` registry (not the `--registry`
+    // override, which only redirects the advisory request) stays in: pnpm
+    // records it as a registry package.
+    let npm_config = aube_registry::config::NpmConfig::load(&cwd);
     let mut pkg_versions: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for pkg in closure.values() {
-        let entry = pkg_versions.entry(pkg.name.clone()).or_default();
+        if pkg
+            .local_source
+            .as_ref()
+            .is_some_and(|source| !is_registry_tarball(source, pkg, &npm_config))
+        {
+            continue;
+        }
+        let entry = pkg_versions
+            .entry(pkg.registry_name().to_string())
+            .or_default();
         if !entry.contains(&pkg.version) {
             entry.push(pkg.version.clone());
         }
@@ -403,6 +419,30 @@ fn render_fix_remaining(selected: &[Row], remaining: &[Row]) {
             eprintln!("- ({}) \"{}\" {}", row.severity, row.title, row.name);
         }
     }
+}
+
+/// Whether `source` is a tarball URL in the package's registry, in the
+/// `<registry>/<name>/-/<basename>-<version>.tgz` layout. pnpm records
+/// such a dependency as a registry package, so it is audited like one.
+fn is_registry_tarball(
+    source: &aube_lockfile::LocalSource,
+    pkg: &aube_lockfile::LockedPackage,
+    npm_config: &aube_registry::config::NpmConfig,
+) -> bool {
+    let aube_lockfile::LocalSource::RemoteTarball(tarball) = source else {
+        return false;
+    };
+    let registry_name = pkg.registry_name();
+    let package_path = format!(
+        "{}/{registry_name}/-/",
+        npm_config.registry_for(registry_name).trim_end_matches('/'),
+    );
+    tarball.url.starts_with(&package_path)
+        && !aube_lockfile::pnpm::registry_tarball_url_is_not_derivable(
+            pkg.registry_name(),
+            &pkg.version,
+            Some(&tarball.url),
+        )
 }
 
 /// Construct the registry client, optionally pointing the default
