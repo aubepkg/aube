@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.1](https://github.com/aubepkg/aube/compare/aube-store-v2.10.0...aube-store-v2.10.1) - 2026-11-12
+
+### Other
+
+- *(store)* save 5% APFS space, compress 23% faster, use up to 6.4 MB less RAM ([#1930](https://github.com/aubepkg/aube/pull/1930))
+
 ## [2.10.0](https://github.com/aubepkg/aube/compare/aube-store-v2.9.0...aube-store-v2.10.0) - 2026-11-09
 
 ### Fixed

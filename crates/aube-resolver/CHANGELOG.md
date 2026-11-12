@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.1](https://github.com/aubepkg/aube/compare/aube-resolver-v2.10.0...aube-resolver-v2.10.1) - 2026-11-12
+
+### Fixed
+
+- *(update)* keep optional-peer bindings that another workspace member provides ([#1970](https://github.com/aubepkg/aube/pull/1970))
+- *(resolver)* allow staged publish to trusted publisher in no-downgrade ([#1957](https://github.com/aubepkg/aube/pull/1957))
+- *(resolver)* wire a registry package's peer to a workspace: provider ([#1954](https://github.com/aubepkg/aube/pull/1954))
+- *(lockfile)* write pnpm settings from current config so frozen installs match ([#1953](https://github.com/aubepkg/aube/pull/1953))
+- *(install)* align strict peer checks with pnpm for prereleases and rule keys ([#1940](https://github.com/aubepkg/aube/pull/1940))
+- *(resolver)* keep locked optional peer bindings on unrelated adds ([#1941](https://github.com/aubepkg/aube/pull/1941))
+- *(resolver)* exclude Vercel CLI dependencies from no-downgrade ([#1933](https://github.com/aubepkg/aube/pull/1933))
+
 ## [2.10.0](https://github.com/aubepkg/aube/compare/aube-resolver-v2.9.0...aube-resolver-v2.10.0) - 2026-11-09
 
 ### Fixed

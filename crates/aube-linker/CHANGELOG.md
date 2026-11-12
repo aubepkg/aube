@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.1](https://github.com/aubepkg/aube/compare/aube-linker-v2.10.0...aube-linker-v2.10.1) - 2026-11-12
+
+### Fixed
+
+- *(resolver)* wire a registry package's peer to a workspace: provider ([#1954](https://github.com/aubepkg/aube/pull/1954))
+- *(linker)* tolerate concurrent installs racing on the shared hidden hoist ([#1949](https://github.com/aubepkg/aube/pull/1949))
+- *(linker)* apply patches whose context lost trailing whitespace ([#1939](https://github.com/aubepkg/aube/pull/1939))
+
 ## [2.9.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.8.5...aube-linker-v2.9.0) - 2026-11-01
 
 ### Fixed

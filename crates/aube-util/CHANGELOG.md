@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.1](https://github.com/aubepkg/aube/compare/aube-util-v2.10.0...aube-util-v2.10.1) - 2026-11-12
+
+### Fixed
+
+- *(registry)* trust bundled Mozilla roots only when the system store is empty ([#1932](https://github.com/aubepkg/aube/pull/1932))
+
 ## [2.8.4](https://github.com/aubepkg/aube/compare/aube-util-v2.8.3...aube-util-v2.8.4) - 2026-10-27
 
 ### Fixed
