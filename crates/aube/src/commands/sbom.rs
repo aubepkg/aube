@@ -90,6 +90,7 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
         exclude_peer_only_packages(
             &graph,
             &closure,
+            filter,
             &manifest.peer_dependencies,
             &manifest.dependencies,
         )
@@ -264,6 +265,7 @@ fn url_is_http(url: &str) -> bool {
 fn exclude_peer_only_packages<'a>(
     graph: &'a LockfileGraph,
     closure: &BTreeMap<String, &'a LockedPackage>,
+    filter: DepFilter,
     root_peer_dependencies: &BTreeMap<String, String>,
     root_dependencies: &BTreeMap<String, String>,
 ) -> BTreeMap<String, &'a LockedPackage> {
@@ -272,7 +274,7 @@ fn exclude_peer_only_packages<'a>(
         .importers
         .iter()
         .flat_map(|(importer, deps)| deps.iter().map(move |dep| (importer == ".", dep)))
-        .filter(|(_, dep)| closure.contains_key(&dep.dep_path))
+        .filter(|(_, dep)| filter.keeps(dep.dep_type) && closure.contains_key(&dep.dep_path))
         .filter(|(is_root, dep)| {
             !is_root
                 || !root_peer_dependencies.contains_key(&dep.name)
@@ -748,8 +750,13 @@ mod tests {
             .iter()
             .map(|(dep_path, pkg)| (dep_path.clone(), pkg))
             .collect();
-        let pruned =
-            exclude_peer_only_packages(&graph, &closure, &BTreeMap::new(), &BTreeMap::new());
+        let pruned = exclude_peer_only_packages(
+            &graph,
+            &closure,
+            DepFilter::All,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
 
         assert!(pruned.contains_key("consumer@1.0.0"));
         assert!(pruned.contains_key("runtime@1.0.0"));
@@ -784,9 +791,59 @@ mod tests {
             .iter()
             .map(|(dep_path, pkg)| (dep_path.clone(), pkg))
             .collect();
-        let kept = exclude_peer_only_packages(&graph, &closure, &BTreeMap::new(), &BTreeMap::new());
+        let kept = exclude_peer_only_packages(
+            &graph,
+            &closure,
+            DepFilter::All,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
 
         assert!(kept.contains_key("is-odd@3.0.1"));
+    }
+
+    #[test]
+    fn exclude_peer_only_packages_applies_dep_filter_to_member_deps() {
+        let dep = |name: &str, dep_type| DirectDep {
+            name: name.into(),
+            dep_path: format!("{name}@1.0.0"),
+            dep_type,
+            specifier: None,
+        };
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(
+            "apps/a".into(),
+            vec![
+                dep("react-dom", DepType::Production),
+                dep("react", DepType::Dev),
+            ],
+        );
+        for name in ["react-dom", "react"] {
+            graph.packages.insert(
+                format!("{name}@1.0.0"),
+                LockedPackage {
+                    name: name.into(),
+                    version: "1.0.0".into(),
+                    dep_path: format!("{name}@1.0.0"),
+                    ..Default::default()
+                },
+            );
+        }
+        let closure: BTreeMap<_, _> = graph
+            .packages
+            .iter()
+            .map(|(dep_path, pkg)| (dep_path.clone(), pkg))
+            .collect();
+        let kept = exclude_peer_only_packages(
+            &graph,
+            &closure,
+            DepFilter::ProdOnly,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
+
+        assert!(kept.contains_key("react-dom@1.0.0"));
+        assert!(!kept.contains_key("react@1.0.0"));
     }
 
     #[test]
@@ -818,6 +875,7 @@ mod tests {
         let pruned = exclude_peer_only_packages(
             &graph,
             &closure,
+            DepFilter::All,
             &BTreeMap::from([("react".into(), "^18".into())]),
             &BTreeMap::new(),
         );
@@ -854,6 +912,7 @@ mod tests {
         let pruned = exclude_peer_only_packages(
             &graph,
             &closure,
+            DepFilter::All,
             &BTreeMap::from([("react".into(), "^18".into())]),
             &BTreeMap::from([("react".into(), "^18".into())]),
         );
