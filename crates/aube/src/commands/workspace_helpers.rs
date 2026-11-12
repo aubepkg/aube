@@ -56,9 +56,9 @@ pub(crate) fn shared_workspace_graph(
 }
 
 /// Collect the transitive dep-path closure reachable from the filtered
-/// root deps, keyed by dep_path for stable iteration. Used by audit,
-/// sbom, and anything else that needs "which packages would apply if
-/// the user ran install in this mode".
+/// root deps, keyed by dep_path for stable iteration. Used by audit and
+/// anything else that needs "which packages would apply if the user ran
+/// install in this mode".
 pub(crate) fn collect_dep_closure(
     graph: &aube_lockfile::LockfileGraph,
     filter: DepFilter,
@@ -78,6 +78,25 @@ pub(crate) fn collect_workspace_dep_closure(
     collect_closure_from(
         graph,
         graph.importers.values().flatten(),
+        filter,
+        no_optional,
+    )
+}
+
+/// Like [`collect_workspace_dep_closure`], but seeded only from importers
+/// other than the root (`.`), so it yields what workspace members reach.
+pub(crate) fn collect_member_dep_closure(
+    graph: &aube_lockfile::LockfileGraph,
+    filter: DepFilter,
+    no_optional: bool,
+) -> std::collections::BTreeMap<String, &aube_lockfile::LockedPackage> {
+    collect_closure_from(
+        graph,
+        graph
+            .importers
+            .iter()
+            .filter(|(path, _)| path.as_str() != ".")
+            .flat_map(|(_, deps)| deps),
         filter,
         no_optional,
     )
