@@ -183,7 +183,7 @@ pub async fn run(args: AuditArgs) -> miette::Result<Option<i32>> {
     // them would leak private names and match same-named public advisories.
     // A tarball URL on the `.npmrc` registry (not an audit-only
     // `--registry` override) stays in: pnpm records it as a registry package.
-    let npm_config = aube_registry::config::NpmConfig::load(&cwd);
+    let npm_config = super::load_npm_config(&cwd);
     let mut pkg_versions: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for pkg in closure.values() {
         if pkg

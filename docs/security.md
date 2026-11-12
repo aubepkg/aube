@@ -509,8 +509,9 @@ schema.
 
 Only registry packages are sent to the advisory endpoint. Workspace, `file:`,
 `link:`, git, and tarball-URL dependencies are neither sent nor audited, so
-private package names never leave your machine. A tarball URL on your
-configured registry counts as a registry package and is still audited.
+their names are not sent. Registry dependencies, including private ones, are
+sent by name. A tarball URL on your configured registry counts as a registry
+package and is still audited.
 
 ## Example strict policy
 
