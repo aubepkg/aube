@@ -140,6 +140,54 @@ _write_clean_fixture() {
 	assert_output --partial "is-number"
 }
 
+@test "aube audit --fix=update reports a member's vulnerable version when the root's version is safe" {
+	cat >package.json <<-'EOF'
+		{ "name": "root", "private": true, "dependencies": { "is-number": "7.0.0" } }
+	EOF
+	cat >aube-workspace.yaml <<-'EOF'
+		packages: [pkg]
+	EOF
+	mkdir pkg
+	cat >pkg/package.json <<-'EOF'
+		{ "name": "pkg", "private": true, "dependencies": { "is-number": "6.0.0" } }
+	EOF
+	run aube install
+	assert_success
+
+	_start_audit_server
+	port="$(cat audit-server-port)"
+	echo "registry=http://127.0.0.1:${port}/" >.npmrc
+
+	run aube audit --fix=update
+	_stop_audit_server
+	assert_failure
+	assert_output --partial "number-high"
+}
+
+@test "aube audit --fix=update reports a member's vulnerable version shared with the root" {
+	cat >package.json <<-'EOF'
+		{ "name": "root", "private": true, "dependencies": { "is-number": "6.0.0" } }
+	EOF
+	cat >aube-workspace.yaml <<-'EOF'
+		packages: [pkg]
+	EOF
+	mkdir pkg
+	cat >pkg/package.json <<-'EOF'
+		{ "name": "pkg", "private": true, "dependencies": { "is-number": "6.0.0" } }
+	EOF
+	run aube install
+	assert_success
+
+	_start_audit_server
+	port="$(cat audit-server-port)"
+	echo "registry=http://127.0.0.1:${port}/" >.npmrc
+
+	run aube audit --fix=update
+	_stop_audit_server
+	assert_failure
+	assert_output --partial "number-high"
+}
+
 @test "aube audit fails without a lockfile" {
 	_write_clean_fixture
 	run aube audit
