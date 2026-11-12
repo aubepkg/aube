@@ -728,3 +728,61 @@ _write_audit_update_exact_fixture() {
 	refute_output --partial "url-dep"
 	refute_output --partial "wrap"
 }
+
+@test "aube audit leaves out a registry tarball URL that names a different package" {
+	_start_audit_server
+	port="$(cat audit-server-port)"
+	echo "registry=http://127.0.0.1:${port}/" >.npmrc
+	cat >package.json <<-'EOF'
+		{
+		  "name": "audit-fixture",
+		  "version": "1.0.0",
+		  "dependencies": {
+		    "wrap": "file:./vendor/wrap"
+		  }
+		}
+	EOF
+	tarball="http://127.0.0.1:${port}/is-number/-/is-number-7.0.0.tgz"
+	mismatch="http://127.0.0.1:${port}/other-pkg/-/private-lib-1.0.0.tgz"
+	cat >aube-lock.yaml <<-EOF
+		lockfileVersion: '9.0'
+
+		settings:
+		  autoInstallPeers: true
+		  excludeLinksFromLockfile: false
+
+		importers:
+		  .:
+		    dependencies:
+		      wrap:
+		        specifier: file:./vendor/wrap
+		        version: file:./vendor/wrap
+
+		packages:
+		  is-number@${tarball}:
+		    resolution: {integrity: sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==, tarball: ${tarball}}
+		    version: 7.0.0
+		  private-lib@${mismatch}:
+		    resolution: {integrity: sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==, tarball: ${mismatch}}
+		    version: 1.0.0
+		  wrap@file:./vendor/wrap:
+		    resolution: {directory: ./vendor/wrap, type: directory}
+
+		snapshots:
+		  is-number@${tarball}: {}
+		  private-lib@${mismatch}: {}
+		  wrap@file:./vendor/wrap:
+		    dependencies:
+		      is-number: ${tarball}
+		      private-lib: ${mismatch}
+	EOF
+
+	run aube audit
+	_stop_audit_server
+	assert_output --partial "number-high"
+
+	run cat audit-request.json
+	assert_output --partial '"is-number":["7.0.0"]'
+	refute_output --partial "private-lib"
+	refute_output --partial "wrap"
+}

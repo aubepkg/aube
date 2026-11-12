@@ -430,7 +430,12 @@ fn is_registry_tarball(
     let aube_lockfile::LocalSource::RemoteTarball(tarball) = source else {
         return false;
     };
-    tarball.url.starts_with(npm_config.registry_for(&pkg.name))
+    let package_path = format!(
+        "{}/{}/-/",
+        npm_config.registry_for(&pkg.name).trim_end_matches('/'),
+        pkg.name
+    );
+    tarball.url.starts_with(&package_path)
         && !aube_lockfile::pnpm::registry_tarball_url_is_not_derivable(
             &pkg.name,
             &pkg.version,
