@@ -181,9 +181,10 @@ pub async fn run(args: AuditArgs) -> miette::Result<Option<i32>> {
     // Packages with a non-registry source (workspace, `link:`, `file:`,
     // portal, exec, git, tarball URL) are left out, as pnpm does: sending
     // them would leak private names and match same-named public advisories.
-    // A tarball URL on the `.npmrc` registry (not an audit-only
-    // `--registry` override) stays in: pnpm records it as a registry package.
-    let npm_config = super::load_npm_config(&cwd);
+    // A tarball URL on the `.npmrc` registry (not the `--registry`
+    // override, which only redirects the advisory request) stays in: pnpm
+    // records it as a registry package.
+    let npm_config = aube_registry::config::NpmConfig::load(&cwd);
     let mut pkg_versions: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for pkg in closure.values() {
         if pkg
