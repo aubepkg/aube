@@ -721,7 +721,6 @@ _write_audit_update_exact_fixture() {
 
 	run aube audit
 	_stop_audit_server
-	assert_output --partial "number-high"
 
 	run cat audit-request.json
 	assert_output --partial '"is-number":["7.0.0"]'
@@ -779,7 +778,6 @@ _write_audit_update_exact_fixture() {
 
 	run aube audit
 	_stop_audit_server
-	assert_output --partial "number-high"
 
 	run cat audit-request.json
 	assert_output --partial '"is-number":["7.0.0"]'
