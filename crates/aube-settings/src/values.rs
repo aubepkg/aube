@@ -1080,6 +1080,14 @@ mod tests {
     }
 
     #[test]
+    fn use_default_trusted_dependencies_reads_workspace_yaml() {
+        let npmrc: Vec<(String, String)> = Vec::new();
+        let ws = raw_yaml("useDefaultTrustedDependencies: false\n");
+        let ctx = ResolveCtx::files_only(&npmrc, &ws);
+        assert!(!resolved::use_default_trusted_dependencies(&ctx));
+    }
+
+    #[test]
     fn generated_accessor_returns_declared_default_when_no_source_matches() {
         let npmrc: Vec<(String, String)> = Vec::new();
         let ws: std::collections::BTreeMap<String, yaml_serde::Value> =

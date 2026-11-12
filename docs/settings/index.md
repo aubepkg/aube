@@ -2688,6 +2688,7 @@ Seed the build allowlist with aube's built-in trusted-dependencies list.
 - Default: `true`
 - Environment: `npm_config_use_default_trusted_dependencies`, `NPM_CONFIG_USE_DEFAULT_TRUSTED_DEPENDENCIES`, `AUBE_USE_DEFAULT_TRUSTED_DEPENDENCIES`
 - .npmrc keys: `useDefaultTrustedDependencies`, `use-default-trusted-dependencies`
+- Workspace YAML keys: `useDefaultTrustedDependencies`
 
 aube ships a snapshot of pnpm's trusted-dependencies list and merges it
 into the dependency lifecycle-script allowlist whenever scripts run. Set
