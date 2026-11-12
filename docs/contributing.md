@@ -10,6 +10,13 @@ in [GitHub Discussions](https://github.com/aubepkg/aube/discussions) or
 [Discord](https://discord.gg/UBa7pJUN7Z) before investing in an implementation.
 Small, obvious fixes can go straight to a pull request.
 
+## Report a bug
+
+Bug reports, in [GitHub Discussions](https://github.com/aubepkg/aube/discussions),
+are only for problems you ran into while using aube. Say what you were trying to
+do, what you ran, the relevant config, and what happened. Reports found by
+reading the source or by having an agent search the code will be closed.
+
 ## Set up the repository
 
 ```sh
