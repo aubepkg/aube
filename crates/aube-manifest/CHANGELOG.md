@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.1](https://github.com/aubepkg/aube/compare/aube-manifest-v2.10.0...aube-manifest-v2.10.1) - 2026-11-12
+
+### Fixed
+
+- *(settings)* read useDefaultTrustedDependencies from pnpm-workspace.yaml ([#1965](https://github.com/aubepkg/aube/pull/1965))
+- *(lockfile)* write pnpm settings from current config so frozen installs match ([#1953](https://github.com/aubepkg/aube/pull/1953))
+
 ## [2.8.4](https://github.com/aubepkg/aube/compare/aube-manifest-v2.8.3...aube-manifest-v2.8.4) - 2026-10-27
 
 ### Fixed

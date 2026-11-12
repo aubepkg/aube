@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.1](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.10.0...aube-lockfile-v2.10.1) - 2026-11-12
+
+### Fixed
+
+- *(lockfile)* keep members' workspace: links valid after aube update ([#1969](https://github.com/aubepkg/aube/pull/1969))
+- *(resolver)* wire a registry package's peer to a workspace: provider ([#1954](https://github.com/aubepkg/aube/pull/1954))
+- *(lockfile)* write pnpm settings from current config so frozen installs match ([#1953](https://github.com/aubepkg/aube/pull/1953))
+
 ## [2.10.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.9.0...aube-lockfile-v2.10.0) - 2026-11-09
 
 ### Fixed

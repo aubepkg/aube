@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.1](https://github.com/aubepkg/aube/compare/v2.10.0...v2.10.1) - 2026-11-12
+
+### Fixed
+
+- *(audit)* look up npm-aliased dependencies under their registry name ([#1971](https://github.com/aubepkg/aube/pull/1971))
+- *(update)* keep optional-peer bindings that another workspace member provides ([#1970](https://github.com/aubepkg/aube/pull/1970))
+- *(sbom)* include packages that only workspace members depend on ([#1967](https://github.com/aubepkg/aube/pull/1967))
+- *(audit)* keep --fix=update advisories while a workspace member still reaches the vulnerable version ([#1968](https://github.com/aubepkg/aube/pull/1968))
+- *(resolver)* wire a registry package's peer to a workspace: provider ([#1954](https://github.com/aubepkg/aube/pull/1954))
+- *(lockfile)* write pnpm settings from current config so frozen installs match ([#1953](https://github.com/aubepkg/aube/pull/1953))
+- *(remove)* reconcile shared-lockfile workspace removals through the workspace install ([#1952](https://github.com/aubepkg/aube/pull/1952))
+- *(exec)* run commands from PATH when no project bin provides them ([#1950](https://github.com/aubepkg/aube/pull/1950))
+- *(install)* align strict peer checks with pnpm for prereleases and rule keys ([#1940](https://github.com/aubepkg/aube/pull/1940))
+- *(exec)* keep activated tool shims on PATH for exec, dlx and run <bin> ([#1935](https://github.com/aubepkg/aube/pull/1935))
+
 ## [2.10.0](https://github.com/aubepkg/aube/compare/v2.9.0...v2.10.0) - 2026-11-09
 
 ### Added
