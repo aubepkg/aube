@@ -269,13 +269,16 @@ fn exclude_peer_only_packages<'a>(
 ) -> BTreeMap<String, &'a LockedPackage> {
     let mut out = BTreeMap::new();
     let mut stack: Vec<String> = graph
-        .root_deps()
+        .importers
         .iter()
-        .filter(|dep| closure.contains_key(&dep.dep_path))
-        .filter(|dep| {
-            !root_peer_dependencies.contains_key(&dep.name)
+        .flat_map(|(importer, deps)| deps.iter().map(move |dep| (importer == ".", dep)))
+        .filter(|(_, dep)| closure.contains_key(&dep.dep_path))
+        .filter(|(is_root, dep)| {
+            !is_root
+                || !root_peer_dependencies.contains_key(&dep.name)
                 || root_dependencies.contains_key(&dep.name)
         })
+        .map(|(_, dep)| dep)
         .map(|dep| dep.dep_path.clone())
         .collect();
 
@@ -752,6 +755,38 @@ mod tests {
         assert!(pruned.contains_key("runtime@1.0.0"));
         assert!(pruned.contains_key("peer-child@1.0.0"));
         assert!(!pruned.contains_key("peer@1.0.0"));
+    }
+
+    #[test]
+    fn exclude_peer_only_packages_keeps_workspace_member_deps() {
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(".".into(), vec![]);
+        graph.importers.insert(
+            "apps/a".into(),
+            vec![DirectDep {
+                name: "is-odd".into(),
+                dep_path: "is-odd@3.0.1".into(),
+                dep_type: DepType::Production,
+                specifier: None,
+            }],
+        );
+        graph.packages.insert(
+            "is-odd@3.0.1".into(),
+            LockedPackage {
+                name: "is-odd".into(),
+                version: "3.0.1".into(),
+                dep_path: "is-odd@3.0.1".into(),
+                ..Default::default()
+            },
+        );
+        let closure: BTreeMap<_, _> = graph
+            .packages
+            .iter()
+            .map(|(dep_path, pkg)| (dep_path.clone(), pkg))
+            .collect();
+        let kept = exclude_peer_only_packages(&graph, &closure, &BTreeMap::new(), &BTreeMap::new());
+
+        assert!(kept.contains_key("is-odd@3.0.1"));
     }
 
     #[test]
