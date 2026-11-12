@@ -83,6 +83,25 @@ pub(crate) fn collect_workspace_dep_closure(
     )
 }
 
+/// Like [`collect_workspace_dep_closure`], but seeded only from importers
+/// other than the root (`.`), so it yields what workspace members reach.
+pub(crate) fn collect_member_dep_closure(
+    graph: &aube_lockfile::LockfileGraph,
+    filter: DepFilter,
+    no_optional: bool,
+) -> std::collections::BTreeMap<String, &aube_lockfile::LockedPackage> {
+    collect_closure_from(
+        graph,
+        graph
+            .importers
+            .iter()
+            .filter(|(path, _)| path.as_str() != ".")
+            .flat_map(|(_, deps)| deps),
+        filter,
+        no_optional,
+    )
+}
+
 fn collect_closure_from<'a>(
     graph: &'a aube_lockfile::LockfileGraph,
     roots: impl Iterator<Item = &'a aube_lockfile::DirectDep>,

@@ -719,20 +719,14 @@ async fn write_fix_lockfile_update(
         .filter(|name| !before.contains_key(*name))
         .collect();
     // The resolve covers only the root manifest, so it cannot fix a version
-    // that only workspace members reach, also when the root reaches a safe
-    // version of the same package.
+    // that workspace members reach, even when the root reaches the same
+    // version or a safe version of the same package.
     let mut member_versions: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-    for pkg in workspace_closure.values() {
-        let name = pkg.registry_name();
-        if !before
-            .get(name)
-            .is_some_and(|versions| versions.contains(&pkg.version))
-        {
-            member_versions
-                .entry(name)
-                .or_default()
-                .insert(&pkg.version);
-        }
+    for pkg in super::collect_member_dep_closure(graph, filter, no_optional).values() {
+        member_versions
+            .entry(pkg.registry_name())
+            .or_default()
+            .insert(&pkg.version);
     }
     let remaining: Vec<Row> = rows
         .iter()
