@@ -1000,6 +1000,11 @@ impl Drop for BufferedBodyBytes {
 pub(super) struct TarballStreamErr {
     pub report: miette::Report,
     pub is_throttle: bool,
+    /// The body read failed mid-stream on the wire (connection reset,
+    /// truncated body, decode error). Nothing about the package is wrong,
+    /// so callers retry through the buffered fetch, which re-requests the
+    /// whole body with backoff.
+    pub retryable: bool,
 }
 
 impl From<TarballStreamErr> for miette::Report {
@@ -1031,12 +1036,14 @@ pub(super) async fn fetch_and_import_tarball_streaming(
     let local = |report: miette::Report| TarballStreamErr {
         report,
         is_throttle: false,
+        retryable: false,
     };
     // Network-error helper, used for chunk read errors during
     // body streaming. Connection resets and read timeouts mid-
     // body are the same kind of upstream signal as a 503 reply.
     let net = |e: aube_registry::Error, ctx: miette::Report| TarballStreamErr {
         is_throttle: e.is_throttle(),
+        retryable: matches!(e, aube_registry::Error::Http(_)),
         report: ctx,
     };
 
@@ -1048,6 +1055,8 @@ pub(super) async fn fetch_and_import_tarball_streaming(
                 crate::dep_chain::format_chain_for(registry_name, version)
             ),
             is_throttle,
+            // The request itself already retried inside `start_tarball_stream`.
+            retryable: false,
         }
     })?;
 

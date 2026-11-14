@@ -1663,10 +1663,27 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                                 fetch_strict_pkg_content_check,
                             )
                             .await;
-                            let (index, bytes_len, computed_integrity) = match streamed {
-                                Ok(v) => {
+                            match streamed {
+                                Ok((index, bytes_len, computed_integrity)) => {
                                     permit.record_success();
-                                    v
+                                    if let Some(p) = bytes_progress.as_ref() {
+                                        p.inc_downloaded_bytes(bytes_len);
+                                    }
+                                    return Ok::<_, miette::Report>((
+                                        dep_path,
+                                        index,
+                                        computed_integrity,
+                                    ));
+                                }
+                                // A body that broke mid-stream is refetched whole
+                                // by the buffered path below, which retries with
+                                // backoff.
+                                Err(e) if e.retryable => {
+                                    tracing::warn!(
+                                        code = aube_codes::warnings::WARN_AUBE_HTTP_RETRY_TRANSPORT,
+                                        "retrying {pkg_display_name}@{pkg_version} through the buffered fetch after a stream error: {}",
+                                        e.report
+                                    );
                                 }
                                 Err(e) => {
                                     if e.is_throttle {
@@ -1676,15 +1693,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                                     }
                                     return Err(e.into());
                                 }
-                            };
-                            if let Some(p) = bytes_progress.as_ref() {
-                                p.inc_downloaded_bytes(bytes_len);
                             }
-                            return Ok::<_, miette::Report>((
-                                dep_path,
-                                index,
-                                computed_integrity,
-                            ));
                         }
 
                         let fetch_outcome = if streaming_sha512_enabled {
