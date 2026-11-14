@@ -127,5 +127,7 @@ PY
 	JSON
 	run aube install
 	assert_failure
-	assert_output --partial "stream error for is-odd@3.0.1"
+	# is-odd and is-number both get cut; whichever fails first is reported.
+	assert_output --partial "stream error for is-"
+	refute_output --partial "through the buffered fetch"
 }
