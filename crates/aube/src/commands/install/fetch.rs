@@ -893,6 +893,9 @@ where
                     && integrity
                         .as_deref()
                         .is_none_or(|s| s.starts_with("sha512-"));
+                // Set when a stream that timed out is recovered by the buffered
+                // fetch, so the shared download limit still sees the timeout.
+                let mut stream_throttled = false;
                 if stream_eligible {
                     let streamed = crate::commands::install::lifecycle::fetch_and_import_tarball_streaming(
                         &client,
@@ -924,12 +927,16 @@ where
                         }
                         // A body that broke mid-stream is refetched whole by
                         // the buffered path below, which retries with backoff.
-                        Err(e) if e.retryable => {
-                            tracing::warn!(
-                                code = aube_codes::warnings::WARN_AUBE_HTTP_RETRY_TRANSPORT,
-                                "retrying {display_name}@{version} through the buffered fetch after a stream error: {}",
-                                e.report
-                            );
+                        Err(e)
+                            if crate::commands::install::lifecycle::retry_stream_via_buffered_fetch(
+                                &client,
+                                &e,
+                                &display_name,
+                                &version,
+                            )
+                            .await =>
+                        {
+                            stream_throttled = e.is_throttle;
                         }
                         Err(e) => {
                             if e.is_throttle {
@@ -976,7 +983,11 @@ where
                 };
                 let (bytes, streamed_digest) = match fetch_outcome {
                     Ok(v) => {
-                        permit.record_success();
+                        if stream_throttled {
+                            permit.record_throttle();
+                        } else {
+                            permit.record_success();
+                        }
                         v
                     }
                     Err((report, throttled)) => {

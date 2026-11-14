@@ -201,4 +201,14 @@ impl RegistryClient {
     pub fn tarball_max_bytes(&self) -> u64 {
         self.fetch_policy.tarball_max_bytes
     }
+
+    /// Extra attempts allowed after a failed request (`fetchRetries`).
+    pub fn fetch_retries(&self) -> u32 {
+        self.fetch_policy.retries
+    }
+
+    /// Backoff before the first retry of a request (`fetchRetryMintimeout`).
+    pub fn first_retry_backoff(&self) -> std::time::Duration {
+        self.fetch_policy.backoff_for_attempt(1)
+    }
 }

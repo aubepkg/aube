@@ -1013,6 +1013,29 @@ impl From<TarballStreamErr> for miette::Report {
     }
 }
 
+/// Decide whether a failed stream is refetched through the buffered path,
+/// and wait out the backoff first. Returns `false` when the error is not
+/// a wire error or `fetchRetries` is 0, so the caller reports it.
+pub(super) async fn retry_stream_via_buffered_fetch(
+    client: &aube_registry::client::RegistryClient,
+    err: &TarballStreamErr,
+    display_name: &str,
+    version: &str,
+) -> bool {
+    if !err.retryable || client.fetch_retries() == 0 {
+        return false;
+    }
+    let wait = client.first_retry_backoff();
+    tracing::warn!(
+        backoff_ms = wait.as_millis() as u64,
+        code = aube_codes::warnings::WARN_AUBE_HTTP_RETRY_TRANSPORT,
+        "retrying {display_name}@{version} through the buffered fetch after a stream error: {}",
+        err.report
+    );
+    tokio::time::sleep(wait).await;
+    true
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn fetch_and_import_tarball_streaming(
     client: &aube_registry::client::RegistryClient,
