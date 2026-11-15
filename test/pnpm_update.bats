@@ -1207,6 +1207,41 @@ JSON
 	assert_success
 }
 
+@test "aube update <indirect-pkg>: moves a transitive dep to the newest version its parent allows" {
+	# Bare `update <transitive>` used to re-resolve to the locked version
+	# because the parent's locked edge pinned it (issue #1975).
+	_require_registry
+
+	add_dist_tag '@pnpm.e2e/pkg-with-1-dep' latest 100.0.0
+	add_dist_tag '@pnpm.e2e/dep-of-pkg-with-1-dep' latest 100.0.0
+	cat >package.json <<'JSON'
+{
+  "name": "pnpm-update-indirect-bare",
+  "version": "0.0.0",
+  "dependencies": {
+    "@pnpm.e2e/pkg-with-1-dep": "100.0.0"
+  }
+}
+JSON
+
+	run aube install
+	assert_success
+	run grep '@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0' aube-lock.yaml
+	assert_success
+
+	add_dist_tag '@pnpm.e2e/dep-of-pkg-with-1-dep' latest 100.1.0
+
+	run aube update '@pnpm.e2e/dep-of-pkg-with-1-dep'
+	assert_success
+
+	run grep '@pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0' aube-lock.yaml
+	assert_success
+	run grep '@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0' aube-lock.yaml
+	assert_failure
+	run grep '"@pnpm.e2e/pkg-with-1-dep": "100.0.0"' package.json
+	assert_success
+}
+
 @test "aube update --prod <devdep>: errors instead of silently bumping the dev dep" {
 	# Regression for the cursor-bugbot finding on PR #446. A devDep named
 	# under `--prod` (or a regular dep under `--dev`, an optional dep

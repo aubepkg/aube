@@ -693,6 +693,43 @@ async fn run_inner(
     //     command line. We filter both `pkg.name` matches AND
     //     `pkg.alias_of` matches so an indirect aliased entry
     //     (`other-alias: npm:dep-of-pkg-with-1-dep@x`) is also dropped.
+    // Lockfiles in pnpm format record only resolved pins, so a parent's
+    // declared range for a bare indirect arg comes from its packument.
+    let mut declared_edge_ranges: HashMap<(String, String), String> = HashMap::new();
+    if let Some(graph) = existing.as_ref() {
+        let client = super::make_client(&cwd);
+        let mut packuments = HashMap::new();
+        for (dep_path, parent) in &graph.packages {
+            for name in &indirect_arg_names {
+                if explicit_latest_keys.contains(name)
+                    || !parent.dependencies.contains_key(name.as_str())
+                {
+                    continue;
+                }
+                if let Some(range) = parent.declared_dependencies.get(name.as_str()) {
+                    declared_edge_ranges.insert((dep_path.clone(), name.clone()), range.clone());
+                    continue;
+                }
+                let registry_name = parent.registry_name();
+                if !packuments.contains_key(registry_name) {
+                    let fetched = client.fetch_packument(registry_name).await.ok();
+                    packuments.insert(registry_name.to_string(), fetched);
+                }
+                let range = packuments
+                    .get(registry_name)
+                    .and_then(Option::as_ref)
+                    .and_then(|p| p.versions.get(&parent.version))
+                    .and_then(|m| {
+                        m.dependencies
+                            .get(name.as_str())
+                            .or_else(|| m.optional_dependencies.get(name.as_str()))
+                    });
+                if let Some(range) = range {
+                    declared_edge_ranges.insert((dep_path.clone(), name.clone()), range.clone());
+                }
+            }
+        }
+    }
     let filtered_existing = existing.as_ref().map(|graph| {
         let mut filtered = graph.clone();
         let manifest_keys: std::collections::HashSet<&str> =
@@ -720,19 +757,30 @@ async fn run_inner(
         // rebroadcasts it as a dist-tag spec, so the transitive task
         // resolves through the registry packument and picks the new
         // latest. Only applied for entries the user named with
-        // `@latest`; bare `update <indirect>` keeps the locked edge so
-        // we don't silently bump something the user didn't ask to bump.
-        if !explicit_latest_keys.is_empty() {
-            for parent_pkg in filtered.packages.values_mut() {
+        // `@latest`.
+        //
+        // A bare `update <indirect>` rewrites the edge to the parent's
+        // declared range instead (`^1.0.30001819`), so the dep moves to
+        // the newest version the parent allows. Parents whose declared
+        // range is unknown keep the locked edge.
+        if !indirect_arg_names.is_empty() {
+            for (dep_path, parent_pkg) in filtered.packages.iter_mut() {
                 for indirect_name in &indirect_arg_names {
-                    if !explicit_latest_keys.contains(indirect_name) {
+                    if !parent_pkg.dependencies.contains_key(indirect_name.as_str()) {
                         continue;
                     }
-                    if parent_pkg.dependencies.contains_key(indirect_name.as_str()) {
-                        parent_pkg
-                            .dependencies
-                            .insert(indirect_name.clone(), "latest".to_string());
-                    }
+                    let new_edge = if explicit_latest_keys.contains(indirect_name) {
+                        "latest".to_string()
+                    } else if let Some(range) =
+                        declared_edge_ranges.get(&(dep_path.clone(), indirect_name.clone()))
+                    {
+                        range.clone()
+                    } else {
+                        continue;
+                    };
+                    parent_pkg
+                        .dependencies
+                        .insert(indirect_name.clone(), new_edge);
                 }
             }
         }
