@@ -706,8 +706,10 @@ async fn run_inner(
     // Lockfiles in pnpm format record only resolved pins, so a parent's
     // declared range for a bare indirect arg comes from its packument.
     let mut declared_edge_ranges: HashMap<(String, String), String> = HashMap::new();
-    let ranges_may_be_rewritten =
-        !pnpmfile_paths.is_empty() || !manifest.package_extensions().is_empty();
+    let has_package_extensions = with_update_settings_ctx(&cwd, |ctx| {
+        !super::install::effective_package_extensions(&manifest, ctx).is_empty()
+    })?;
+    let ranges_may_be_rewritten = !pnpmfile_paths.is_empty() || has_package_extensions;
     let mut warned_names: BTreeSet<&str> = BTreeSet::new();
     if let Some(graph) = existing.as_ref() {
         let client = super::make_client(&cwd);
@@ -748,9 +750,9 @@ async fn run_inner(
                     .and_then(Option::as_ref)
                     .and_then(|p| p.versions.get(&parent.version))
                     .and_then(|m| {
-                        m.dependencies
+                        m.optional_dependencies
                             .get(name.as_str())
-                            .or_else(|| m.optional_dependencies.get(name.as_str()))
+                            .or_else(|| m.dependencies.get(name.as_str()))
                     });
                 if let Some(range) = range {
                     declared_edge_ranges.insert((dep_path.clone(), name.clone()), range.clone());

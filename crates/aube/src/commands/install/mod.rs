@@ -81,8 +81,8 @@ use materialize::{
     GvsPrewarmInputs, VirtualStorePlanInputs, combine_install_pipeline_errors, materialize_channel,
     plan_virtual_store, spawn_gvs_prewarm,
 };
-pub(crate) use settings::PeerDependencyRules;
 pub(crate) use settings::resolve_minimum_release_age;
+pub(crate) use settings::{PeerDependencyRules, effective_package_extensions};
 pub(crate) use settings::{
     ResolverConfigInputs, configure_resolver, finalize_lockfile_graph, resolve_dependency_policy,
 };
