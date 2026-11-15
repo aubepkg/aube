@@ -693,6 +693,16 @@ async fn run_inner(
     //     command line. We filter both `pkg.name` matches AND
     //     `pkg.alias_of` matches so an indirect aliased entry
     //     (`other-alias: npm:dep-of-pkg-with-1-dep@x`) is also dropped.
+    let pnpmfile_paths = if args.ignore_pnpmfile {
+        Vec::new()
+    } else {
+        let (ws, _) = aube_manifest::workspace::load_both(&cwd).unwrap_or_default();
+        crate::pnpmfile::ordered_paths(
+            crate::pnpmfile::detect_global(&cwd, args.global_pnpmfile.as_deref()).as_deref(),
+            crate::pnpmfile::detect(&cwd, args.pnpmfile.as_deref(), ws.pnpmfile_path.as_deref())
+                .as_deref(),
+        )
+    };
     // Lockfiles in pnpm format record only resolved pins, so a parent's
     // declared range for a bare indirect arg comes from its packument.
     let mut declared_edge_ranges: HashMap<(String, String), String> = HashMap::new();
@@ -708,6 +718,13 @@ async fn run_inner(
                 }
                 if let Some(range) = parent.declared_dependencies.get(name.as_str()) {
                     declared_edge_ranges.insert((dep_path.clone(), name.clone()), range.clone());
+                    continue;
+                }
+                // `readPackage` hooks and `packageExtensions` can change a
+                // parent's declared range, which the raw packument doesn't
+                // show; keep the locked edge rather than restore the
+                // published range.
+                if !pnpmfile_paths.is_empty() || !manifest.package_extensions().is_empty() {
                     continue;
                 }
                 let registry_name = parent.registry_name();
@@ -793,16 +810,6 @@ async fn run_inner(
     // graph before we hand it to the lockfile writer; without this,
     // `aube install` runs in frozen-prefer mode below and never
     // re-evaluates the hook.
-    let pnpmfile_paths = if args.ignore_pnpmfile {
-        Vec::new()
-    } else {
-        let (ws, _) = aube_manifest::workspace::load_both(&cwd).unwrap_or_default();
-        crate::pnpmfile::ordered_paths(
-            crate::pnpmfile::detect_global(&cwd, args.global_pnpmfile.as_deref()).as_deref(),
-            crate::pnpmfile::detect(&cwd, args.pnpmfile.as_deref(), ws.pnpmfile_path.as_deref())
-                .as_deref(),
-        )
-    };
     super::run_pnpmfile_pre_resolution(&pnpmfile_paths, &cwd, existing.as_ref()).await?;
     let (read_package_host, read_package_forwarders) =
         match crate::pnpmfile::ReadPackageHostChain::spawn(&pnpmfile_paths, &cwd)

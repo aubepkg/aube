@@ -1240,6 +1240,15 @@ JSON
 	assert_failure
 	run grep '"@pnpm.e2e/pkg-with-1-dep": "100.0.0"' package.json
 	assert_success
+
+	# A newer version outside the parent's `^100.0.0` range stays out.
+	add_dist_tag '@pnpm.e2e/dep-of-pkg-with-1-dep' latest 101.0.0
+	run aube update '@pnpm.e2e/dep-of-pkg-with-1-dep'
+	assert_success
+	run grep '@pnpm.e2e/dep-of-pkg-with-1-dep@100.1.0' aube-lock.yaml
+	assert_success
+	run grep '@pnpm.e2e/dep-of-pkg-with-1-dep@101.0.0' aube-lock.yaml
+	assert_failure
 }
 
 @test "aube update --prod <devdep>: errors instead of silently bumping the dev dep" {
