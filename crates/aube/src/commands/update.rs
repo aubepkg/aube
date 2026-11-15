@@ -706,6 +706,9 @@ async fn run_inner(
     // Lockfiles in pnpm format record only resolved pins, so a parent's
     // declared range for a bare indirect arg comes from its packument.
     let mut declared_edge_ranges: HashMap<(String, String), String> = HashMap::new();
+    let ranges_may_be_rewritten =
+        !pnpmfile_paths.is_empty() || !manifest.package_extensions().is_empty();
+    let mut warned_names: BTreeSet<&str> = BTreeSet::new();
     if let Some(graph) = existing.as_ref() {
         let client = super::make_client(&cwd);
         let mut packuments = HashMap::new();
@@ -716,15 +719,23 @@ async fn run_inner(
                 {
                     continue;
                 }
-                if let Some(range) = parent.declared_dependencies.get(name.as_str()) {
-                    declared_edge_ranges.insert((dep_path.clone(), name.clone()), range.clone());
+                // `readPackage` hooks and `packageExtensions` can change a
+                // parent's declared range, which neither the lockfile nor
+                // the raw packument necessarily reflects; keep the locked
+                // edge rather than restore a stale range.
+                if ranges_may_be_rewritten {
+                    if warned_names.insert(name.as_str()) {
+                        tracing::warn!(
+                            code = aube_codes::warnings::WARN_AUBE_TRANSITIVE_UPDATE_SKIPPED,
+                            "not updating {name}: a pnpmfile or packageExtensions may change \
+                             its parents' declared ranges. Use `aube update {name}@latest` \
+                             to bump it"
+                        );
+                    }
                     continue;
                 }
-                // `readPackage` hooks and `packageExtensions` can change a
-                // parent's declared range, which the raw packument doesn't
-                // show; keep the locked edge rather than restore the
-                // published range.
-                if !pnpmfile_paths.is_empty() || !manifest.package_extensions().is_empty() {
+                if let Some(range) = parent.declared_dependencies.get(name.as_str()) {
+                    declared_edge_ranges.insert((dep_path.clone(), name.clone()), range.clone());
                     continue;
                 }
                 let registry_name = parent.registry_name();

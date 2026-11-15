@@ -1251,6 +1251,37 @@ JSON
 	assert_failure
 }
 
+@test "aube update <indirect-pkg>: warns and keeps the locked version when packageExtensions may change ranges" {
+	_require_registry
+
+	add_dist_tag '@pnpm.e2e/pkg-with-1-dep' latest 100.0.0
+	add_dist_tag '@pnpm.e2e/dep-of-pkg-with-1-dep' latest 100.0.0
+	cat >package.json <<'JSON'
+{
+  "name": "pnpm-update-indirect-ext",
+  "version": "0.0.0",
+  "dependencies": {
+    "@pnpm.e2e/pkg-with-1-dep": "100.0.0"
+  },
+  "pnpm": {
+    "packageExtensions": {
+      "@pnpm.e2e/foo": { "dependencies": {} }
+    }
+  }
+}
+JSON
+
+	run aube install
+	assert_success
+	add_dist_tag '@pnpm.e2e/dep-of-pkg-with-1-dep' latest 100.1.0
+
+	run aube update '@pnpm.e2e/dep-of-pkg-with-1-dep'
+	assert_success
+	assert_output --partial 'WARN_AUBE_TRANSITIVE_UPDATE_SKIPPED'
+	run grep '@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0' aube-lock.yaml
+	assert_success
+}
+
 @test "aube update --prod <devdep>: errors instead of silently bumping the dev dep" {
 	# Regression for the cursor-bugbot finding on PR #446. A devDep named
 	# under `--prod` (or a regular dep under `--dev`, an optional dep
