@@ -693,6 +693,73 @@ async fn run_inner(
     //     command line. We filter both `pkg.name` matches AND
     //     `pkg.alias_of` matches so an indirect aliased entry
     //     (`other-alias: npm:dep-of-pkg-with-1-dep@x`) is also dropped.
+    let pnpmfile_paths = if args.ignore_pnpmfile {
+        Vec::new()
+    } else {
+        let (ws, _) = aube_manifest::workspace::load_both(&cwd).unwrap_or_default();
+        crate::pnpmfile::ordered_paths(
+            crate::pnpmfile::detect_global(&cwd, args.global_pnpmfile.as_deref()).as_deref(),
+            crate::pnpmfile::detect(&cwd, args.pnpmfile.as_deref(), ws.pnpmfile_path.as_deref())
+                .as_deref(),
+        )
+    };
+    // Lockfiles in pnpm format record only resolved pins, so a parent's
+    // declared range for a bare indirect arg comes from its packument.
+    let mut declared_edge_ranges: HashMap<(String, String), String> = HashMap::new();
+    let has_package_extensions = with_update_settings_ctx(&cwd, |ctx| {
+        !super::install::effective_package_extensions(&manifest, ctx).is_empty()
+    })?;
+    let ranges_may_be_rewritten = !pnpmfile_paths.is_empty() || has_package_extensions;
+    let mut warned_names: BTreeSet<&str> = BTreeSet::new();
+    if let Some(graph) = existing.as_ref() {
+        let client = super::make_client(&cwd);
+        let mut packuments = HashMap::new();
+        for (dep_path, parent) in &graph.packages {
+            for name in &indirect_arg_names {
+                if explicit_latest_keys.contains(name)
+                    || !parent.dependencies.contains_key(name.as_str())
+                {
+                    continue;
+                }
+                // `readPackage` hooks and `packageExtensions` can change a
+                // parent's declared range, which neither the lockfile nor
+                // the raw packument necessarily reflects; keep the locked
+                // edge rather than restore a stale range.
+                if ranges_may_be_rewritten {
+                    if warned_names.insert(name.as_str()) {
+                        tracing::warn!(
+                            code = aube_codes::warnings::WARN_AUBE_TRANSITIVE_UPDATE_SKIPPED,
+                            "not updating {name}: a pnpmfile or packageExtensions may change \
+                             its parents' declared ranges. Use `aube update {name}@latest` \
+                             to bump it"
+                        );
+                    }
+                    continue;
+                }
+                if let Some(range) = parent.declared_dependencies.get(name.as_str()) {
+                    declared_edge_ranges.insert((dep_path.clone(), name.clone()), range.clone());
+                    continue;
+                }
+                let registry_name = parent.registry_name();
+                if !packuments.contains_key(registry_name) {
+                    let fetched = client.fetch_packument(registry_name).await.ok();
+                    packuments.insert(registry_name.to_string(), fetched);
+                }
+                let range = packuments
+                    .get(registry_name)
+                    .and_then(Option::as_ref)
+                    .and_then(|p| p.versions.get(&parent.version))
+                    .and_then(|m| {
+                        m.optional_dependencies
+                            .get(name.as_str())
+                            .or_else(|| m.dependencies.get(name.as_str()))
+                    });
+                if let Some(range) = range {
+                    declared_edge_ranges.insert((dep_path.clone(), name.clone()), range.clone());
+                }
+            }
+        }
+    }
     let filtered_existing = existing.as_ref().map(|graph| {
         let mut filtered = graph.clone();
         let manifest_keys: std::collections::HashSet<&str> =
@@ -720,19 +787,30 @@ async fn run_inner(
         // rebroadcasts it as a dist-tag spec, so the transitive task
         // resolves through the registry packument and picks the new
         // latest. Only applied for entries the user named with
-        // `@latest`; bare `update <indirect>` keeps the locked edge so
-        // we don't silently bump something the user didn't ask to bump.
-        if !explicit_latest_keys.is_empty() {
-            for parent_pkg in filtered.packages.values_mut() {
+        // `@latest`.
+        //
+        // A bare `update <indirect>` rewrites the edge to the parent's
+        // declared range instead (`^1.0.30001819`), so the dep moves to
+        // the newest version the parent allows. Parents whose declared
+        // range is unknown keep the locked edge.
+        if !indirect_arg_names.is_empty() {
+            for (dep_path, parent_pkg) in filtered.packages.iter_mut() {
                 for indirect_name in &indirect_arg_names {
-                    if !explicit_latest_keys.contains(indirect_name) {
+                    if !parent_pkg.dependencies.contains_key(indirect_name.as_str()) {
                         continue;
                     }
-                    if parent_pkg.dependencies.contains_key(indirect_name.as_str()) {
-                        parent_pkg
-                            .dependencies
-                            .insert(indirect_name.clone(), "latest".to_string());
-                    }
+                    let new_edge = if explicit_latest_keys.contains(indirect_name) {
+                        "latest".to_string()
+                    } else if let Some(range) =
+                        declared_edge_ranges.get(&(dep_path.clone(), indirect_name.clone()))
+                    {
+                        range.clone()
+                    } else {
+                        continue;
+                    };
+                    parent_pkg
+                        .dependencies
+                        .insert(indirect_name.clone(), new_edge);
                 }
             }
         }
@@ -745,16 +823,6 @@ async fn run_inner(
     // graph before we hand it to the lockfile writer; without this,
     // `aube install` runs in frozen-prefer mode below and never
     // re-evaluates the hook.
-    let pnpmfile_paths = if args.ignore_pnpmfile {
-        Vec::new()
-    } else {
-        let (ws, _) = aube_manifest::workspace::load_both(&cwd).unwrap_or_default();
-        crate::pnpmfile::ordered_paths(
-            crate::pnpmfile::detect_global(&cwd, args.global_pnpmfile.as_deref()).as_deref(),
-            crate::pnpmfile::detect(&cwd, args.pnpmfile.as_deref(), ws.pnpmfile_path.as_deref())
-                .as_deref(),
-        )
-    };
     super::run_pnpmfile_pre_resolution(&pnpmfile_paths, &cwd, existing.as_ref()).await?;
     let (read_package_host, read_package_forwarders) =
         match crate::pnpmfile::ReadPackageHostChain::spawn(&pnpmfile_paths, &cwd)

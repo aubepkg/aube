@@ -807,6 +807,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_TRANSITIVE_UPDATE_SKIPPED",
+      "category": "Update / prerelease",
+      "description": "`aube update <transitive>` left the dependency at its locked version because a pnpmfile or `packageExtensions` may change its parents' declared ranges; `<name>@latest` still bumps it.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_MINIMUM_RELEASE_AGE_BLOCKED_UPDATE",
       "category": "Update / prerelease",
       "description": "One or more newer package versions were hidden because they have not satisfied `minimumReleaseAge` yet.",
