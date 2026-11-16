@@ -1,0 +1,244 @@
+{
+	"lockfileVersion": "13.0",
+
+	"settings": {
+		"autoInstallPeers": true,
+		"excludeLinksFromLockfile": false,
+		"catalogs": {
+			"evens": {
+				"is-even": "1.0.0",
+			},
+		},
+		"overrides": {
+			"is-number": "6.0.0",
+			"@pnpm.e2e/abc-parent-with-ab": "1.0.1",
+		},
+		"patchedDependencies": {
+			"is-positive@1.0.0": "8c6fbbc0eb92aeb7d87814e4349178c7d8f7dd4a3c3cb58aa1e1b336dfa3eeeb",
+		},
+	},
+
+	"projects": {
+		".": {
+			"dependencies": {
+				"@pnpm.e2e/abc": "1.0.0",
+				"@pnpm.e2e/abc-grand-parent-with-c": "1.0.1",
+				"@pnpm.e2e/abc-parent-with-missing-peers": "1.0.0",
+				"@pnpm.e2e/peer-a": "1.0.1",
+				"@pnpm.e2e/peer-b": "1.0.0",
+				"@pnpm.e2e/peer-c": "2.0.0",
+				"c": "workspace:*",
+				"is-negative": {
+					"specifier": "github:kevva/is-negative#1d7e288222b53a0cab90a331f1865220ec29560c",
+					"version": "https://codeload.github.com/kevva/is-negative/tar.gz/1d7e288222b53a0cab90a331f1865220ec29560c",
+				},
+				"is-odd": "3.0.1",
+				"is-positive": "1.0.0",
+				"pos": "npm:is-positive@3.1.0",
+				"tpos": {
+					"specifier": "https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678",
+					"version": "is-positive@https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678",
+				},
+			},
+			"devDependencies": {
+				"d-alias": "workspace:d@*",
+			},
+		},
+
+		"packages/c": {
+			"name": "c",
+			"dependencies": {
+				"@pnpm.e2e/abc": "1.0.0",
+				"@pnpm.e2e/peer-a": "1.0.0",
+				"@pnpm.e2e/peer-b": "1.0.0",
+				"@pnpm.e2e/peer-c": "1.0.0",
+				"d": "workspace:^",
+			},
+		},
+
+		"packages/d": {
+			"name": "d",
+			"dependencies": {
+				"is-even": "catalog:evens",
+			},
+			"devDependencies": {
+				"@pnpm.e2e/peer-a": "1.0.0",
+			},
+		},
+	},
+
+	"packages": {
+		"@pnpm.e2e/abc-grand-parent-with-c@1.0.1": {
+			"integrity": "sha512-5iNVhF5ZCyILpQsTUi0+GnftYZNTIijzbhxqq/2X3N4/aLy3wv5+pfQ4nfwq+4yXJq57poKEFUA/aSFoCw5nwQ==",
+			"dependencies": {
+				"@pnpm.e2e/abc-parent-with-ab": "1.0.1",
+				"@pnpm.e2e/peer-c": "1.0.1",
+			},
+		},
+
+		"@pnpm.e2e/abc-parent-with-ab@1.0.1": {
+			"integrity": "sha512-d6KkYJkPdHjlj0URdgA8I8y8nXuzVY05O0oLxKaeO9Y1Fd64WUCtVIhrp31WgkJ65mHmLErrRSVd1plxyehIVA==",
+			"peerDependencies": {
+				"@pnpm.e2e/peer-c": {
+					"version": "1.0.1",
+					"below": true,
+				},
+			},
+			"dependencies": {
+				"@pnpm.e2e/abc": "1.0.0",
+				"@pnpm.e2e/peer-a": "1.0.1",
+				"@pnpm.e2e/peer-b": "1.0.0",
+				"is-positive": "1.0.0",
+			},
+		},
+
+		"@pnpm.e2e/abc-parent-with-missing-peers@1.0.0": {
+			"integrity": "sha512-Qkasr8Ni7JKKgMOy8dOo62lyjf6WHEMaEgqWzhTuHvk0hY5rvoEaffQSIBaFEovr3Sb4qvzqqQh+1cxLEKa0KA==",
+			"peerDependencies": {
+				"@pnpm.e2e/peer-a": {
+					"version": "1.0.1",
+					"below": true,
+				},
+				"@pnpm.e2e/peer-b": {
+					"version": "1.0.0",
+					"below": true,
+				},
+				"@pnpm.e2e/peer-c": {
+					"version": "2.0.0",
+					"below": true,
+				},
+			},
+			"dependencies": {
+				"@pnpm.e2e/abc": "1.0.0",
+			},
+		},
+
+		"@pnpm.e2e/abc@1.0.0": {
+			"integrity": "sha512-/BCMmCRQ58DLWtF5iU97Lbf0s+llpWHvvZvQfFnCYFBpa1pfYnlJW1k6+Z4UzcUdYrUvyDmYPwxGVvPStAUw1w==",
+			"peerDependencies": {
+				"@pnpm.e2e/peer-a": "^1.0.0",
+				"@pnpm.e2e/peer-b": {
+					"specifier": "^1.0.0",
+					"version": "1.0.0",
+				},
+				"@pnpm.e2e/peer-c": "^1.0.0",
+			},
+			"dependencies": {
+				"@pnpm.e2e/dep-of-pkg-with-1-dep": "100.0.0",
+			},
+			"snapshots": [
+				{
+					"peerDependencies": {
+						"@pnpm.e2e/peer-a": {
+							"version": "1.0.0",
+						},
+						"@pnpm.e2e/peer-c": {
+							"version": "1.0.0",
+						},
+					},
+				},
+				{
+					"peerDependencies": {
+						"@pnpm.e2e/peer-a": {
+							"version": "1.0.1",
+						},
+						"@pnpm.e2e/peer-c": {
+							"version": "1.0.1",
+						},
+					},
+				},
+				{
+					"peerDependencies": {
+						"@pnpm.e2e/peer-a": {
+							"version": "1.0.1",
+						},
+						"@pnpm.e2e/peer-c": {
+							"version": "2.0.0",
+						},
+					},
+				},
+			],
+		},
+
+		"@pnpm.e2e/dep-of-pkg-with-1-dep@100.0.0": {
+			"integrity": "sha512-KUmwlEiE3pzpmPCfrLkoOO7fmL4Tft+dcm6YQlUfOUJvHO73xlcKVoA/xOHP/ayUO8GiPlIqWRbKHrsxvXGE8g==",
+		},
+
+		"@pnpm.e2e/peer-a@1.0.0": {
+			"integrity": "sha512-HWiRzsHA7LZG3kVf+WEw4p6jAwKbz7EInY2EZr7zZsyUS5CsrPm0pT+d7R/meViooeQxdQoUYsPq7Dgv89EpjQ==",
+		},
+
+		"@pnpm.e2e/peer-a@1.0.1": {
+			"integrity": "sha512-eKxesosmflSp5xnW1gyRhMZ75RLI7SupTZNe1SK6EPDDgNmswNxbwdpyUDFUDWa3yHd5WSQbRDH2IysqMWIs2g==",
+		},
+
+		"@pnpm.e2e/peer-b@1.0.0": {
+			"integrity": "sha512-jvRKPPRU2qx/AxfcpyO/aSX8TQclpXUXOnUbSLxgBi+P4+InCRkK2u+jFQbcc+b8rIFzR0jr7YCIYLIjRDPPcw==",
+		},
+
+		"@pnpm.e2e/peer-c@1.0.0": {
+			"integrity": "sha512-SQ3TfmnPopiVIqzC/PVV8WlfJjVWFdszQhfZG6e9stDFD9i9dZ5VQImKYhvJsME4nb45rHGsc/4CmroEjO7aCA==",
+		},
+
+		"@pnpm.e2e/peer-c@1.0.1": {
+			"integrity": "sha512-6ag+AQOLJgsioiG8aInnOJGautKz7lNf3zKQ8FJHOb4b3yIclmUofTaDwth9ydp9W56qzwbHWXjkdrqfW5JViQ==",
+		},
+
+		"@pnpm.e2e/peer-c@2.0.0": {
+			"integrity": "sha512-s0TPtcya7A2r7vSzmq1dNAdxUNY0TQXeyARH8YMe/d7wb3/I4gryxBP3VVGPuKf6LUO+AALCBr0Jha8wwG7isg==",
+		},
+
+		"is-even@1.0.0": {
+			"integrity": "sha512-LEhnkAdJqic4Dbqn58A0y52IXoHWlsueqQkKfMfdEnIYG8A1sm/GHidKkS6yvXlMoRrkM34csHnXQtOqcb+Jzg==",
+			"engines": {"node": ">=0.10.0"},
+			"dependencies": {
+				"is-odd": "0.1.2",
+			},
+		},
+
+		"is-negative@https://codeload.github.com/kevva/is-negative/tar.gz/1d7e288222b53a0cab90a331f1865220ec29560c": {
+			"resolution": {"gitHosted": true, "tarball": "https://codeload.github.com/kevva/is-negative/tar.gz/1d7e288222b53a0cab90a331f1865220ec29560c"},
+			"integrity": "sha512-TplPmPAWx/99v1ucQMsRl3Ii4iSiT/OSs71i+mb9/e8FFoCZnDva0zRk4Cyp68rZ9aWzg5ltyki9giTvfBQCUw==",
+			"version": "2.1.0",
+			"engines": {"node": ">=0.10.0"},
+		},
+
+		"is-number@6.0.0": {
+			"integrity": "sha512-Wu1VHeILBK8KAWJUAiSZQX94GmOE45Rg6/538fKwiloUu21KncEkYGPqob2oSZ5mUT73vLGrHQjKw3KMPwfDzg==",
+			"engines": {"node": ">=0.10.0"},
+		},
+
+		"is-odd@0.1.2": {
+			"integrity": "sha512-Ri7C2K7o5IrUU9UEI8losXJCCD/UtsaIrkR5sxIcFg4xQ9cRJXlWA5DQvTE0yDc0krvSNLsRGXN11UPS6KyfBw==",
+			"engines": {"node": ">=0.10.0"},
+			"dependencies": {
+				"is-number": "6.0.0",
+			},
+		},
+
+		"is-odd@3.0.1": {
+			"integrity": "sha512-CQpnWPrDwmP1+SMHXZhtLtJv90yiyVfluGsX5iNCVkrhQtU3TQHsUWPG9wkdk9Lgd5yNpAg9jQEo90CBaXgWMA==",
+			"engines": {"node": ">=4"},
+			"dependencies": {
+				"is-number": "6.0.0",
+			},
+		},
+
+		"is-positive@1.0.0": {
+			"integrity": "sha512-xxzPGZ4P2uN6rROUa5N9Z7zTX6ERuE0hs6GUOc/cKBLF2NqKc16UwqHMt3tFg4CO6EBTE5UecUasg+3jZx3Ckg==",
+			"engines": {"node": ">=0.10.0"},
+		},
+
+		"is-positive@3.1.0": {
+			"integrity": "sha512-8ND1j3y9/HP94TOvGzr69/FgbkX2ruOldhLEsTWwcJVfo4oRjwemJmJxt7RJkKYH8tz7vYBP9JcKQY8CLuJ90Q==",
+			"engines": {"node": ">=0.10.0"},
+		},
+
+		"is-positive@https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678": {
+			"resolution": {"gitHosted": true, "tarball": "https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678"},
+			"integrity": "sha512-ImoN9vdC+9CSDxbHJIcYwImhox3/lvLNqKpX5dNXT9O5Vawb+c4wddQ6KXq8FsFMm4WuSc3nxaWG2Q3iBRcFdA==",
+			"version": "3.1.0",
+			"engines": {"node": ">=0.10.0"},
+		},
+	},
+}

@@ -32,12 +32,14 @@ fn rebase_importer_local(local: LocalSource, importer_path: &str) -> LocalSource
     }
 }
 
-/// Lowest `lockfileVersion` this reader understands. pnpm v9 replaced
-/// the top-level `dependencies:` map and `/name@version` package keys
-/// with `importers:` + `snapshots:`; every pass below assumes that
-/// shape, so older files must be rejected rather than parsed into an
-/// empty graph.
-pub(super) const MIN_LOCKFILE_VERSION: u64 = 9;
+/// The `lockfileVersion` major this reader understands. pnpm v9
+/// replaced the top-level `dependencies:` map and `/name@version`
+/// package keys with `importers:` + `snapshots:`; every pass below
+/// assumes that shape, so older files must be rejected rather than
+/// parsed into an empty graph. Newer majors change the shape again:
+/// v13 is read through `next` into this shape first, and any other is
+/// refused rather than misread.
+pub(super) const LOCKFILE_VERSION_MAJOR: u64 = 9;
 
 /// Major component of a `lockfileVersion`. pnpm has written the value
 /// both as a quoted string (`'9.0'`, `'6.0'`) and as a bare YAML float
@@ -92,21 +94,26 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
 
 pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<LockfileGraph, Error> {
     let content = crate::read_lockfile(path)?;
-    let raw = parse_raw_lockfile(&content)
-        .map_err(|e| Error::parse_yaml_err(path, content.clone(), &e))?;
-
-    // Version guard before any structural pass: a pre-v9 lockfile is
-    // valid YAML that yields zero importers, which would otherwise
-    // link nothing and exit 0.
-    match lockfile_version_major(&raw.lockfile_version) {
-        Some(major) if major >= MIN_LOCKFILE_VERSION => {}
-        _ => {
-            return Err(Error::UnsupportedPnpmLockfileVersion {
-                path: path.to_path_buf(),
-                version: render_lockfile_version(&raw.lockfile_version),
-            });
+    let raw = if super::next::declares_next_format(&content) {
+        super::next::to_raw(&content).map_err(|message| Error::parse(path, message))?
+    } else {
+        let raw = parse_raw_lockfile(&content)
+            .map_err(|e| Error::parse_yaml_err(path, content.clone(), &e))?;
+        // Version guard before any structural pass: a pre-v9 lockfile
+        // is valid YAML that yields zero importers, which would
+        // otherwise link nothing and exit 0, and a newer one has a
+        // shape this reader would misread.
+        match lockfile_version_major(&raw.lockfile_version) {
+            Some(LOCKFILE_VERSION_MAJOR) => {}
+            _ => {
+                return Err(Error::UnsupportedPnpmLockfileVersion {
+                    path: path.to_path_buf(),
+                    version: render_lockfile_version(&raw.lockfile_version),
+                });
+            }
         }
-    }
+        raw
+    };
 
     // Layout guard for a lockfile whose declared version does not match
     // its body: `lockfileVersion: '9.0'` over a pre-v9 body passes the

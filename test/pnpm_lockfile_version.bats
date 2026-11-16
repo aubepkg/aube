@@ -246,3 +246,73 @@ assert_output_unwrapped() {
 	assert_success
 	assert_dir_exists node_modules/is-odd
 }
+
+# pnpm 12.19+ writes lockfile version 13 (JSON with trailing commas,
+# no `snapshots`) when pnpm-workspace.yaml sets `lockfile.format: v13`.
+# aube reads it but writes only version 9, so it must never rewrite
+# the file. The fixture is what pnpm 12.21 wrote for this project
+# against the test registry.
+_setup_pnpm_v13_project() {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "test-pnpm-v13-lock",
+		  "version": "1.0.0",
+		  "dependencies": {
+		    "is-odd": "^3.0.1",
+		    "react": "18.3.1",
+		    "react-dom": "18.3.1"
+		  }
+		}
+	EOF
+	printf 'lockfile:\n  format: v13\n' >pnpm-workspace.yaml
+	cp "$PROJECT_ROOT/test/fixtures/pnpm-v13/pnpm-lock.yaml" pnpm-lock.yaml
+}
+
+@test "pnpm lockfileVersion 13 installs frozen without rewriting the lockfile" {
+	_setup_pnpm_v13_project
+
+	run aube install --frozen-lockfile
+	assert_success
+	assert [ -f node_modules/react-dom/package.json ]
+	assert [ -f node_modules/is-odd/package.json ]
+	# react-dom's peer on react resolves to the root's react.
+	assert [ -d node_modules/.aube/react-dom@18.3.1_react@18.3.1 ]
+	run cmp pnpm-lock.yaml "$PROJECT_ROOT/test/fixtures/pnpm-v13/pnpm-lock.yaml"
+	assert_success
+}
+
+@test "pnpm lockfileVersion 13 survives a plain install unchanged" {
+	_setup_pnpm_v13_project
+
+	run aube install
+	assert_success
+	assert [ -f node_modules/react-dom/package.json ]
+	rm -rf node_modules
+	run aube install
+	assert_success
+	assert [ -f node_modules/react-dom/package.json ]
+	run cmp pnpm-lock.yaml "$PROJECT_ROOT/test/fixtures/pnpm-v13/pnpm-lock.yaml"
+	assert_success
+}
+
+@test "pnpm lockfileVersion 13 is not rewritten when the install changes it" {
+	_setup_pnpm_v13_project
+	cat >package.json <<-'EOF'
+		{
+		  "name": "test-pnpm-v13-lock",
+		  "version": "1.0.0",
+		  "dependencies": {
+		    "is-even": "^1.0.0",
+		    "is-odd": "^3.0.1",
+		    "react": "18.3.1",
+		    "react-dom": "18.3.1"
+		  }
+		}
+	EOF
+
+	run aube install
+	assert_equal "$status" 17
+	assert_output --partial "ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY"
+	run cmp pnpm-lock.yaml "$PROJECT_ROOT/test/fixtures/pnpm-v13/pnpm-lock.yaml"
+	assert_success
+}

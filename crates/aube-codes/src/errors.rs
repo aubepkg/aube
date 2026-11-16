@@ -19,6 +19,7 @@ pub const ERR_AUBE_RESOLUTION_SHAPE_MISMATCH: &str = "ERR_AUBE_RESOLUTION_SHAPE_
 pub const ERR_AUBE_LOCKFILE_CONFIG_MISMATCH: &str = "ERR_AUBE_LOCKFILE_CONFIG_MISMATCH";
 pub const ERR_AUBE_UNSUPPORTED_NAMED_REGISTRY: &str = "ERR_AUBE_UNSUPPORTED_NAMED_REGISTRY";
 #[rustfmt::skip] pub const ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION: &str = "ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION";
+pub const ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY: &str = "ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY";
 
 // ── resolver ─────────────────────────────────────────────────────────
 pub const ERR_AUBE_NO_MATCHING_VERSION: &str = "ERR_AUBE_NO_MATCHING_VERSION";
@@ -198,8 +199,14 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION,
         category: category::LOCKFILE,
-        description: "A pnpm lockfile aube cannot read: a `lockfileVersion` older than 9 (the pnpm 8.x and earlier formats), a malformed version, or a v9 header over a pre-v9 body.",
+        description: "A pnpm lockfile aube cannot read: a `lockfileVersion` older than 9 (the pnpm 8.x and earlier formats), a version newer than 9 other than pnpm's experimental 13, a malformed version, or a v9 header over a pre-v9 body.",
         exit_code: Some(16),
+    },
+    CodeMeta {
+        name: ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY,
+        category: category::LOCKFILE,
+        description: "An install would change a pnpm lockfile written in pnpm's experimental version 13 format (`lockfile.format: v13`), which aube reads but does not write. aube refuses rather than rewrite the file at version 9.",
+        exit_code: Some(17),
     },
     // Resolver
     CodeMeta {

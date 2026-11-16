@@ -1,6 +1,6 @@
 use crate::progress::InstallProgress;
 use aube_lockfile::{DriftStatus, LockfileGraph, LockfileKind};
-use miette::{Context, IntoDiagnostic, miette};
+use miette::{Context, miette};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -370,7 +370,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
             manifest,
             lo_write_kind,
         )
-        .into_diagnostic()
+        .map_err(miette::Report::new)
         .wrap_err("failed to write lockfile")?;
         tracing::debug!(
             "--lockfile-only: wrote {}",

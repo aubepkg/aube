@@ -246,6 +246,15 @@ pub fn write_with_project_root(
     graph: &LockfileGraph,
     manifest: &PackageJson,
 ) -> Result<(), Error> {
+    // aube writes only v9, so writing over pnpm's v13 format would
+    // silently change the format of a file pnpm owns.
+    if std::fs::read_to_string(path)
+        .is_ok_and(|existing| super::next::declares_next_format(&existing))
+    {
+        return Err(Error::PnpmLockfileV13ReadOnly {
+            path: path.to_path_buf(),
+        });
+    }
     let environment = leading_environment_document(path);
     let native_pnpm_aliases = path
         .file_name()

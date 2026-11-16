@@ -2323,7 +2323,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                                 &manifest,
                                 write_kind,
                             )
-                            .into_diagnostic()
+                            .map_err(miette::Report::new)
                             .wrap_err("failed to write lockfile with computed integrity")?;
                             if let Some(path) = &hidden_lockfile_path {
                                 hidden_lockfile::write(path, &cwd, lock_graph, &manifest);
