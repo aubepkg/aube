@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.1](https://github.com/aubepkg/aube/compare/aube-codes-v2.10.0...aube-codes-v2.10.1) - 2026-11-16
+
+### Fixed
+
+- *(update)* re-resolve a named transitive dep within its parent's range ([#1976](https://github.com/aubepkg/aube/pull/1976))
+- *(registry)* fall back to system DNS when hickory lookups time out ([#1943](https://github.com/aubepkg/aube/pull/1943))
+- *(registry)* trust bundled Mozilla roots only when the system store is empty ([#1932](https://github.com/aubepkg/aube/pull/1932))
+
 ## [2.7.2](https://github.com/aubepkg/aube/compare/aube-codes-v2.7.1...aube-codes-v2.7.2) - 2026-10-17
 
 ### Other
