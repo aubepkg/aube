@@ -91,6 +91,44 @@ fn v13_after_env_document_reads_like_v9() {
     );
 }
 
+/// A lone document that opens with `---` is the lockfile itself, not an
+/// env document with nothing after it.
+#[test]
+fn v13_yaml_after_document_start_reads_like_json_form() {
+    let json = std::fs::read_to_string(fixture("peers.v13.yaml")).unwrap();
+    let yaml = yaml_serde::to_string(&parse_document(&json).unwrap()).unwrap();
+    assert_eq!(
+        graph_of_content(&format!("---\n{yaml}")).unwrap(),
+        graph_of(&fixture("peers.v13.yaml"))
+    );
+}
+
+/// Blank and comment lines before the env document don't hide it.
+#[test]
+fn v13_after_commented_env_document_reads_like_v9() {
+    let json = std::fs::read_to_string(fixture("peers.v13.yaml")).unwrap();
+    let content =
+        format!("# pinned by pnpm\n\n---\nlockfileVersion: '9.0'\nimporters: {{}}\n---\n{json}");
+    assert_eq!(
+        graph_of_content(&content).unwrap(),
+        graph_of(&fixture("peers.v9.yaml"))
+    );
+}
+
+/// A root-level dependency block is the pre-v9 layout under any version,
+/// so it is refused rather than dropped.
+#[test]
+fn v13_with_root_dependencies_is_refused() {
+    let err =
+        graph_of_content(r#"{"lockfileVersion": "13.0", "dependencies": {"is-odd": "3.0.1"}}"#)
+            .expect_err("root dependencies");
+    assert!(
+        matches!(&err, crate::Error::PnpmLockfileLegacyLayout { marker, .. }
+            if marker == "root-level `dependencies:` block"),
+        "{err:?}"
+    );
+}
+
 #[test]
 fn detects_the_version_of_each_form() {
     assert!(declares_next_format("lockfileVersion: '13.0'\n"));
@@ -105,7 +143,13 @@ fn detects_the_version_of_each_form() {
     assert!(!declares_next_format("lockfileVersion: '9.0'\n"));
     assert!(!declares_next_format("lockfileVersion: '13'\n"));
     assert!(!declares_next_format("lockfileVersion: '13.x'\n"));
-    assert!(!declares_next_format("---\nlockfileVersion: '13.0'\n"));
+    assert!(declares_next_format("---\nlockfileVersion: '13.0'\n"));
+    assert!(declares_next_format(
+        "# env\n\n---\nlockfileVersion: '9.0'\n---\nlockfileVersion: '13.0'\n"
+    ));
+    assert!(!declares_next_format(
+        "---\nlockfileVersion: '9.0'\n---\nlockfileVersion: '9.0'\n"
+    ));
     // Only the top-level key counts, not one nested or inside a string.
     assert!(!declares_next_format(
         "{\"settings\": {\"lockfileVersion\": \"13.0\"}, \"lockfileVersion\": \"9.0\"}"
@@ -245,4 +289,18 @@ fn writing_over_v13_is_refused() {
         Some(aube_codes::errors::ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY)
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), v13);
+}
+
+/// A lockfile that exists but cannot be read might be v13, so the write
+/// fails instead of replacing it.
+#[test]
+fn writing_over_unreadable_lockfile_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::create_dir(&path).unwrap();
+    let graph = parse(&fixture("peers.v9.yaml")).unwrap();
+    let err = crate::pnpm::write(&path, &graph, &aube_manifest::PackageJson::default())
+        .expect_err("an unreadable lockfile is not overwritten");
+    assert!(matches!(&err, crate::Error::Io(..)), "{err:?}");
+    assert!(path.is_dir());
 }

@@ -132,8 +132,8 @@ lockfile:
 `aube install --frozen-lockfile` and installs that leave the lockfile
 unchanged work from a v13 lockfile. aube does not write version 13 and
 never rewrites a v13 lockfile at version 9: an install that would change
-the lockfile, including any `--no-frozen-lockfile` or `--force` install
-(which always resolve afresh), stops with
+the lockfile, including `--no-frozen-lockfile` and `--force` without
+`--frozen-lockfile` (both resolve afresh), stops with
 [`ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY`](/error-codes) (exit code `17`).
 Update the lockfile with pnpm, or remove `lockfile.format: v13` and run
 `pnpm install` to switch back to version 9.

@@ -26,6 +26,14 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Catalog → alias → (specifier, version).
 type Catalogs = BTreeMap<String, BTreeMap<String, (String, String)>>;
 
+/// Root-level blocks of the pre-v9 layout, which the v9 reader refuses.
+const LEGACY_ROOT_BLOCKS: [&str; 4] = [
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "specifiers",
+];
+
 /// The major `lockfileVersion` of the format.
 const NEXT_MAJOR: u16 = 13;
 
@@ -52,7 +60,17 @@ pub(super) fn declares_next_format(content: &str) -> bool {
 pub(super) fn to_raw(content: &str) -> Result<RawPnpmLockfile, String> {
     let content = normalized(content);
     let document = parse_document(main_document(&content))?;
-    let v9 = Next::read(&document)?.into_v9()?;
+    let mut v9 = Next::read(&document)?.into_v9()?;
+    // v13 has no root-level dependency blocks. Carry any over so the
+    // reader's pre-v9 layout guard refuses them instead of the graph
+    // silently coming back without those dependencies.
+    if let (Some(v9), Some(root)) = (v9.as_object_mut(), document.as_object()) {
+        for block in LEGACY_ROOT_BLOCKS {
+            if let Some(value) = root.get(block) {
+                v9.insert(block.to_string(), value.clone());
+            }
+        }
+    }
     serde_json::from_value(v9).map_err(|err| err.to_string())
 }
 
@@ -67,14 +85,23 @@ fn normalized(content: &str) -> Cow<'_, str> {
 }
 
 /// The lockfile document after a leading `---` env document, if there is
-/// one.
+/// one. Blank and comment lines may come before the first `---`, and a
+/// `---` with no second document after it opens the only document.
 fn main_document(content: &str) -> &str {
-    let Some(rest) = content.strip_prefix("---\n") else {
+    let mut start = 0;
+    for line in content.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            break;
+        }
+        start += line.len();
+    }
+    let Some(rest) = content[start..].strip_prefix("---\n") else {
         return content;
     };
     match rest.find("\n---\n") {
         Some(at) => &rest[at + "\n---\n".len()..],
-        None => "",
+        None => rest,
     }
 }
 

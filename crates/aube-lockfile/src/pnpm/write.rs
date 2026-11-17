@@ -248,9 +248,14 @@ pub fn write_with_project_root(
 ) -> Result<(), Error> {
     // aube writes only v9, so writing over pnpm's v13 format would
     // silently change the format of a file pnpm owns.
-    if std::fs::read_to_string(path)
-        .is_ok_and(|existing| super::next::declares_next_format(&existing))
-    {
+    // A file that exists but cannot be read may still be v13, so only a
+    // missing one is safe to write.
+    let declares_v13 = match std::fs::read_to_string(path) {
+        Ok(existing) => super::next::declares_next_format(&existing),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(err) => return Err(Error::Io(path.to_path_buf(), err)),
+    };
+    if declares_v13 {
         return Err(Error::PnpmLockfileV13ReadOnly {
             path: path.to_path_buf(),
         });
