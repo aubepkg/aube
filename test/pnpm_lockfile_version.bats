@@ -345,6 +345,13 @@ _setup_pnpm_v13_project() {
 	assert_success
 	run cmp pnpm-lock.yaml "$PROJECT_ROOT/test/fixtures/pnpm-v13/pnpm-lock.yaml"
 	assert_success
+
+	# Rewritten from the copy under node_modules, which is version 9.
+	rm pnpm-lock.yaml
+	run aube install
+	assert_success
+	run cmp pnpm-lock.yaml "$PROJECT_ROOT/test/fixtures/pnpm-v13/pnpm-lock.yaml"
+	assert_success
 }
 
 @test "lockfile.format v9 writes a version 13 lockfile back as version 9" {

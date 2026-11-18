@@ -992,6 +992,9 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                     local_pnpmfile.as_deref(),
                 )
                 .await;
+                if let Some(format) = lockfile_settings.pnpm_lockfile_format {
+                    graph.settings.pnpm_lockfile_format = Some(format);
+                }
                 let write_inputs = lockfile_write_overlap::LockfileWriteInputs {
                     graph: graph.clone(),
                     manifest: manifest.clone(),

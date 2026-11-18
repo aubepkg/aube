@@ -424,18 +424,44 @@ fn v13_is_kept_in_a_lockfile_without_a_requested_format() {
     assert_eq!(written_over(Some(&v13), &graph), v13);
 }
 
-/// A lockfile that exists but cannot be read might be v13, so the write
-/// fails instead of replacing it.
+/// Per-project and deploy lockfiles are new files written from a fresh
+/// resolve, so the format of the lockfile it replaces has to come along.
+#[test]
+fn re_resolved_graph_keeps_the_prior_format() {
+    let prior = parse(&fixture("dedupe.v13.yaml")).unwrap();
+    let mut resolved = parse(&fixture("dedupe.v9.yaml")).unwrap();
+    resolved.overlay_metadata_from(&prior);
+    assert_eq!(
+        resolved.settings.pnpm_lockfile_format,
+        Some(crate::PnpmLockfileFormat::V13)
+    );
+    resolved.settings.pnpm_lockfile_format = Some(crate::PnpmLockfileFormat::V9);
+    resolved.overlay_metadata_from(&prior);
+    assert_eq!(
+        resolved.settings.pnpm_lockfile_format,
+        Some(crate::PnpmLockfileFormat::V9)
+    );
+}
+
+/// A lockfile that exists but cannot be read is not replaced, whatever
+/// format the graph asks for: its format and environment are unknown.
 #[test]
 fn writing_over_unreadable_lockfile_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("pnpm-lock.yaml");
     std::fs::create_dir(&path).unwrap();
-    let graph = parse(&fixture("peers.v9.yaml")).unwrap();
-    let err = crate::pnpm::write(&path, &graph, &aube_manifest::PackageJson::default())
-        .expect_err("an unreadable lockfile is not overwritten");
-    assert!(matches!(&err, crate::Error::Io(..)), "{err:?}");
-    assert!(path.is_dir());
+    let mut graph = parse(&fixture("peers.v9.yaml")).unwrap();
+    for format in [
+        None,
+        Some(crate::PnpmLockfileFormat::V9),
+        Some(crate::PnpmLockfileFormat::V13),
+    ] {
+        graph.settings.pnpm_lockfile_format = format;
+        let err = crate::pnpm::write(&path, &graph, &aube_manifest::PackageJson::default())
+            .expect_err("an unreadable lockfile is not overwritten");
+        assert!(matches!(&err, crate::Error::Io(..)), "{format:?}: {err:?}");
+        assert!(path.is_dir());
+    }
 }
 
 const INTEGRITY: &str = "sha512-ImoN9vdC+9CSDxbHJIcYwImhox3/lvLNqKpX5dNXT9O5Vawb+c4wddQ6KXq8FsFMm4WuSc3nxaWG2Q3iBRcFdA==";

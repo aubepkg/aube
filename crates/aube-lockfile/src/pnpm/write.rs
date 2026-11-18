@@ -255,13 +255,13 @@ pub fn write_with_project_root(
         .and_then(|name| name.to_str())
         .is_some_and(is_pnpm_lockfile_name);
     let requested_format = graph.settings.pnpm_lockfile_format;
-    // A file that exists but cannot be read may be v13, so its format is
-    // unknown unless the graph names one.
+    // A file that exists but cannot be read is not replaced, even when the
+    // graph names a format: its format and its environment document are
+    // unknown.
     let existing = if native_pnpm_aliases {
         match std::fs::read_to_string(path) {
             Ok(content) => Some(content),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-            Err(_) if requested_format.is_some() => None,
             Err(err) => return Err(Error::Io(path.to_path_buf(), err)),
         }
     } else {

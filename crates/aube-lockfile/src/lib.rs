@@ -1217,6 +1217,11 @@ impl LockfileGraph {
         if self.bun_config_version.is_none() {
             self.bun_config_version = prior.bun_config_version;
         }
+        // A fresh resolve does not know the format of the lockfile it
+        // replaces, which per-project and deploy lockfiles keep.
+        if self.settings.pnpm_lockfile_format.is_none() {
+            self.settings.pnpm_lockfile_format = prior.settings.pnpm_lockfile_format;
+        }
         if self.patched_dependencies.is_empty() {
             self.patched_dependencies = prior.patched_dependencies.clone();
         }

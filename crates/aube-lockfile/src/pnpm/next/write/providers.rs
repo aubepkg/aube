@@ -238,29 +238,64 @@ impl<'a, 'o> ProviderFinder<'a, 'o> {
         self.candidates.get_mut(name)?.matching(key, constraint)
     }
 
+    /// The first provider of `name` depth first below `key`: a snapshot
+    /// that has `name` as its own peer provides its dependency on it,
+    /// otherwise its children that need `name` are searched in order.
+    /// Walked with a stack of its own, so a long chain of snapshots cannot
+    /// overflow the thread's stack.
     fn first_provider_below(&mut self, key: &'a Key, name: &'a str) -> Option<&'a DepRef> {
-        if let Some(found) = self.found.get(&(key, name)) {
-            return *found;
+        let mut stack = match self.begin_search(key, name) {
+            Ok(found) => return found,
+            Err(children) => vec![(key, children.into_iter())],
+        };
+        loop {
+            let (_, children) = stack.last_mut()?;
+            let Some(child) = children.next() else {
+                // Nothing below provides it, which `found` already says.
+                stack.pop();
+                if stack.is_empty() {
+                    return None;
+                }
+                continue;
+            };
+            match self.begin_search(child, name) {
+                Ok(None) => {}
+                Ok(Some(found)) => {
+                    // Every snapshot on the stack finds it through this child.
+                    for (key, _) in stack {
+                        self.found.insert((key, name), Some(found));
+                    }
+                    return Some(found);
+                }
+                Err(children) => stack.push((child, children.into_iter())),
+            }
         }
-        self.found.insert((key, name), None);
-        let found = self.search(key, name);
-        self.found.insert((key, name), found);
-        found
     }
 
-    fn search(&mut self, key: &'a Key, name: &'a str) -> Option<&'a DepRef> {
+    /// The provider of `name` at `key` when it is known without searching
+    /// below, or the children to search. A snapshot whose search is under
+    /// way counts as providing nothing, which breaks cycles.
+    fn begin_search(
+        &mut self,
+        key: &'a Key,
+        name: &'a str,
+    ) -> Result<Option<&'a DepRef>, Vec<&'a Key>> {
+        if let Some(found) = self.found.get(&(key, name)) {
+            return Ok(*found);
+        }
+        self.found.insert((key, name), None);
         let snapshots = self.snapshots;
-        let entry = snapshots.get(key)?;
-        let own = self.own_peers.get(key)?;
+        let (Some(entry), Some(own)) = (snapshots.get(key), self.own_peers.get(key)) else {
+            return Ok(None);
+        };
         if let Some((_, reference)) = entry
             .children()
             .find(|(alias, _)| own.contains(alias.as_str()) && *alias == name)
         {
-            return Some(reference);
+            self.found.insert((key, name), Some(reference));
+            return Ok(Some(reference));
         }
-        self.children_needing_peer(key, name)
-            .into_iter()
-            .find_map(|child| self.first_provider_below(child, name))
+        Err(self.children_needing_peer(key, name))
     }
 
     fn children_needing_peer(&self, key: &Key, name: &str) -> Vec<&'a Key> {
