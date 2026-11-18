@@ -18,11 +18,12 @@ test/registry/storage/** linguist-generated=true -diff
 aube.usage.kdl text eol=lf
 
 # Golden fixtures consumed by the byte-parity tests in
-# `crates/aube-lockfile/src/{pnpm,bun}.rs`. Windows' autocrlf would
+# `crates/aube-lockfile/src/{pnpm,bun}.rs` and `pnpm/next/tests.rs`
+# (`pnpm-v13/`; `**` so subdirectories are covered too). Windows' autocrlf would
 # otherwise rewrite these to CRLF on checkout, so `parse → write`
 # compares LF (what the writer emits) against CRLF (what's on disk)
 # and the test fails.
-crates/aube-lockfile/tests/fixtures/* text eol=lf
+crates/aube-lockfile/tests/fixtures/** text eol=lf
 
 # AGENTS.md / CLAUDE.md / GEMINI.md are git symlinks (mode 120000) to
 # `.rules`. On Windows git needs `core.symlinks=true` AND the checkout
