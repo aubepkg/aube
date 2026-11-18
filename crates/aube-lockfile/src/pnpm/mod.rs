@@ -1,6 +1,7 @@
 mod checksum;
 mod dep_path;
 mod format;
+mod next;
 mod raw;
 mod read;
 mod subset;

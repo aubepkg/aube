@@ -200,7 +200,7 @@ pub(crate) fn write_and_log_lockfile(
     graph.settings.extra =
         super::with_settings_ctx(cwd, super::install::resolve_lockfile_settings_extra);
     let written_path = aube_lockfile::write_lockfile_as(cwd, &graph, manifest, kind)
-        .into_diagnostic()
+        .map_err(miette::Report::new)
         .wrap_err("failed to write lockfile")?;
     eprintln!(
         "Wrote {}",

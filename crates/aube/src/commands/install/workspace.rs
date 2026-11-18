@@ -419,7 +419,6 @@ pub(super) fn write_per_project_lockfiles(
     fallback_kind: aube_lockfile::LockfileKind,
     write_selection: Option<&std::collections::BTreeSet<String>>,
 ) -> miette::Result<()> {
-    use miette::IntoDiagnostic;
     let root_selected = crate::commands::selected_lockfile_kind(workspace_root)?;
     for (importer_path, pkg_manifest) in workspace_manifests {
         // Filtered install: only (re)write the selected importers'
@@ -474,7 +473,7 @@ pub(super) fn write_per_project_lockfiles(
             None => aube_lockfile::detect_existing_lockfile_kind(&pkg_dir).unwrap_or(fallback_kind),
         };
         let written = aube_lockfile::write_lockfile_as(&pkg_dir, &subset, pkg_manifest, write_kind)
-            .into_diagnostic()
+            .map_err(miette::Report::new)
             .wrap_err_with(|| format!("failed to write per-project lockfile at {importer_path}"))?;
         tracing::debug!(
             "sharedWorkspaceLockfile=false: wrote {} for importer {importer_path}",

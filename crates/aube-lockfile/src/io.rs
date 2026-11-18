@@ -1099,13 +1099,26 @@ pub enum Error {
     #[diagnostic(
         code(ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION),
         help(
-            "aube reads pnpm lockfile version 9 (pnpm v9 and newer). regenerate it with `npx pnpm@latest install`, or delete the lockfile and run `aube install` to resolve from package.json"
+            "aube reads pnpm lockfile version 9 (pnpm v9 and newer) and pnpm's experimental version 13. regenerate it with `npx pnpm@latest install`, or delete the lockfile and run `aube install` to resolve from package.json"
         )
     )]
     UnsupportedPnpmLockfileVersion {
         path: std::path::PathBuf,
         version: String,
     },
+    /// aube reads pnpm's experimental v13 lockfile but writes only v9,
+    /// so it refuses to replace a v13 file rather than change its
+    /// format behind the user's back.
+    #[error(
+        "lockfile {path} uses pnpm's experimental lockfileVersion 13, which aube reads but cannot write"
+    )]
+    #[diagnostic(
+        code(ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY),
+        help(
+            "this install changes the lockfile, and aube would have to rewrite it at version 9. update it with pnpm, or remove `lockfile.format: v13` from pnpm-workspace.yaml and run `pnpm install` to switch it back to version 9"
+        )
+    )]
+    PnpmLockfileV13ReadOnly { path: std::path::PathBuf },
     /// A lockfile whose declared `lockfileVersion` is v9 or newer but
     /// whose body is pre-v9 (top-level `dependencies:`, no
     /// `importers:`). Shares the code above: the cause the user has to

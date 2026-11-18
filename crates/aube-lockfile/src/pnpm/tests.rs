@@ -2908,11 +2908,13 @@ fn parse_accepts_v9_lockfile_with_no_packages() {
     assert!(parse(&path).is_ok());
 }
 
-/// Versions at or above the v9 baseline stay readable, including a
-/// hypothetical future major so a newer pnpm isn't locked out.
+/// Any v9 minor stays readable: under ComVer a minor bump only adds
+/// what an older reader can skip. A newer major is refused (see
+/// `next::tests::unknown_newer_version_is_refused`), since pnpm's v13
+/// showed a major bump changes the shape.
 #[test]
-fn parse_accepts_v9_and_newer_lockfile_versions() {
-    for version in ["'9.0'", "9", "'10.0'"] {
+fn parse_accepts_v9_lockfile_versions() {
+    for version in ["'9.0'", "9", "'9.1'"] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pnpm-lock.yaml");
         std::fs::write(
@@ -5136,17 +5138,18 @@ mod lockfile_version_properties {
             prop_assert_eq!(lockfile_version_major(&value), None);
         }
 
-        /// Whatever the encoding, a version resolves iff the reader
-        /// would accept it, and the accept threshold is exactly 9.
+        /// Whatever the encoding, the v9 reader accepts major 9 and
+        /// nothing else: older majors have another shape, and newer
+        /// ones (v13 has its own reader) would be misread.
         #[test]
-        fn acceptance_tracks_the_v9_baseline(major in 0u64..64) {
+        fn acceptance_is_exactly_v9(major in 0u64..64) {
             let quoted = yaml_serde::Value::String(format!("{major}.0"));
             let bare = yaml_serde::Value::Number(major.into());
             let accepted = |v: &yaml_serde::Value| {
-                lockfile_version_major(v).is_some_and(|m| m >= super::super::read::MIN_LOCKFILE_VERSION)
+                lockfile_version_major(v) == Some(super::super::read::LOCKFILE_VERSION_MAJOR)
             };
-            prop_assert_eq!(accepted(&quoted), major >= 9);
-            prop_assert_eq!(accepted(&bare), major >= 9);
+            prop_assert_eq!(accepted(&quoted), major == 9);
+            prop_assert_eq!(accepted(&bare), major == 9);
         }
     }
 }

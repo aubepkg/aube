@@ -88,7 +88,7 @@ pub(super) fn write_one(
             manifest,
             write_kind,
         )
-        .into_diagnostic()
+        .map_err(miette::Report::new)
         .wrap_err("failed to write lockfile")?;
         // Matches the format resolve.bats and similar tests assert against
         // (e.g. "Wrote aube-lock.yaml").
