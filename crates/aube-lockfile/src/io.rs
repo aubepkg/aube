@@ -1106,19 +1106,19 @@ pub enum Error {
         path: std::path::PathBuf,
         version: String,
     },
-    /// aube reads pnpm's experimental v13 lockfile but writes only v9,
-    /// so it refuses to replace a v13 file rather than change its
-    /// format behind the user's back.
-    #[error(
-        "lockfile {path} uses pnpm's experimental lockfileVersion 13, which aube reads but cannot write"
-    )]
+    /// The graph has no v13 lockfile that reads back to it, so writing
+    /// one would lose information.
+    #[error("cannot write {path} in pnpm's experimental lockfileVersion 13 format: {reason}")]
     #[diagnostic(
-        code(ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY),
+        code(ERR_AUBE_PNPM_LOCKFILE_V13_NOT_REPRESENTABLE),
         help(
-            "this install changes the lockfile, and aube would have to rewrite it at version 9. update it with pnpm, or remove `lockfile.format: v13` from pnpm-workspace.yaml and run `pnpm install` to switch it back to version 9"
+            "the file was left unchanged. set `lockfile.format: v9` in pnpm-workspace.yaml to write version 9, and report the project at https://github.com/aubepkg/aube/issues"
         )
     )]
-    PnpmLockfileV13ReadOnly { path: std::path::PathBuf },
+    PnpmLockfileV13NotRepresentable {
+        path: std::path::PathBuf,
+        reason: String,
+    },
     /// A lockfile whose declared `lockfileVersion` is v9 or newer but
     /// whose body is pre-v9 (top-level `dependencies:`, no
     /// `importers:`). Shares the code above: the cause the user has to

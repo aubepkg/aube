@@ -121,22 +121,34 @@ to refuse the install with
 [`ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION`](/error-codes) (exit code
 `16`).
 
-aube also reads pnpm's experimental **lockfile version 13**, which pnpm
-12.19 and later write when `pnpm-workspace.yaml` sets:
+aube also reads and writes pnpm's experimental **lockfile version 13**,
+which pnpm 12.19 and later write when `pnpm-workspace.yaml` sets:
 
 ```yaml
 lockfile:
   format: v13
 ```
 
-`aube install --frozen-lockfile` and installs that leave the lockfile
-unchanged work from a v13 lockfile. aube does not write version 13 and
-never rewrites a v13 lockfile at version 9: an install that would change
-the lockfile, including `--no-frozen-lockfile` and `--force` without
-`--frozen-lockfile` (both resolve afresh), stops with
-[`ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY`](/error-codes) (exit code `17`).
-Update the lockfile with pnpm, or remove `lockfile.format: v13` and run
-`pnpm install` to switch back to version 9.
+aube writes version 13 the way pnpm 12.21 does, byte for byte, so pnpm and
+aube can share the file:
+
+- An existing v13 `pnpm-lock.yaml` stays at version 13, and an existing v9
+  one stays at version 9.
+- `lockfile.format` overrides the existing format, and a new
+  `pnpm-lock.yaml` is written in the format it names. aube creates
+  `aube-lock.yaml` for a project without a lockfile unless
+  `defaultLockfileFormat` is `pnpm`.
+- As in pnpm, the format applies when the lockfile is written. A lockfile
+  in the other format is not out of date: `--frozen-lockfile` accepts it,
+  and an install that changes nothing leaves it as it is.
+- `aube-lock.yaml` is always written at version 9; `lockfile.format`
+  only affects `pnpm-lock.yaml`.
+
+If a resolved graph cannot be written at version 13 so that it reads back
+the same, aube stops with
+[`ERR_AUBE_PNPM_LOCKFILE_V13_NOT_REPRESENTABLE`](/error-codes) (exit code
+`17`) and leaves the lockfile unchanged. Set `lockfile.format: v9` to write
+version 9 instead.
 
 To upgrade an older pnpm lockfile, run a modern pnpm once to convert it:
 

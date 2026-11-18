@@ -102,6 +102,7 @@ Use `aube config find <words>` to search from your terminal, or `aube config exp
 | [`lockfileDir`](#setting-lockfiledir) | `path` | Directory the lockfile is written to and read from. |
 | [`preferFrozenLockfile`](#setting-preferfrozenlockfile) | `bool` | Perform a headless install if the lockfile already satisfies `package.json`. |
 | [`lockfileIncludeTarballUrl`](#setting-lockfileincludetarballurl) | `bool` | Add the full tarball URL to each lockfile entry. |
+| [`lockfileFormat`](#setting-lockfileformat) | `"v9" \| "v13"` | Format to write pnpm-lock.yaml in: pnpm's version 9 or its experimental version 13. |
 | [`excludeLinksFromLockfile`](#setting-excludelinksfromlockfile) | `bool` | Skip local `link:` dependencies when writing the lockfile. |
 | [`gitBranchLockfile`](#setting-gitbranchlockfile) | `bool` | Generate branch-specific lockfile names (`aube-lock.&lt;branch&gt;.yaml`). |
 | [`mergeGitBranchLockfilesBranchPattern`](#setting-mergegitbranchlockfilesbranchpattern) | `list<string>` | Branch-name glob list for auto-merging branch lockfiles. |
@@ -1748,6 +1749,31 @@ re-reading `.npmrc`.
 Examples:
 
 - `echo 'lockfile-include-tarball-url=true' >> .npmrc && aube install`
+
+### `lockfileFormat` {#setting-lockfileformat}
+
+Format to write pnpm-lock.yaml in: pnpm's version 9 or its experimental version 13.
+
+- Type: `"v9" | "v13"`
+- Default: `undefined`
+- Environment: `npm_config_lockfile_format`, `NPM_CONFIG_LOCKFILE_FORMAT`, `AUBE_LOCKFILE_FORMAT`
+- Workspace YAML keys: `lockfile.format`
+
+pnpm's `lockfile.format` setting. `v13` writes `pnpm-lock.yaml` in pnpm's
+experimental version 13 format, `v9` in version 9. When unset, aube keeps
+the format of the existing `pnpm-lock.yaml` and writes a new one at
+version 9.
+
+As in pnpm, the format applies when the lockfile is written: a lockfile in
+the other format is not out of date, so an install that changes nothing
+leaves it as it is, and `--frozen-lockfile` accepts it.
+
+Only `pnpm-lock.yaml` is affected. `aube-lock.yaml` is always written in
+version 9.
+
+Examples:
+
+- `printf 'lockfile:\n  format: v13\n' >> pnpm-workspace.yaml && aube install`
 
 ### `excludeLinksFromLockfile` {#setting-excludelinksfromlockfile}
 

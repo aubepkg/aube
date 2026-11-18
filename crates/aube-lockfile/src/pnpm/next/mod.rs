@@ -11,11 +11,12 @@
 //! This module rebuilds the v9 sections with pnpm's own rules, ported from
 //! `crates/lockfile/src/next_format` in pnpm. As a result, a v13 file reads
 //! into the same graph as the v9 file pnpm writes for the same project.
-//! aube does not write the format: see `write.rs`.
+//! `write.rs` writes the format back the way pnpm does.
 
 mod refs;
 mod restore;
 mod tarjan;
+mod write;
 
 use super::raw::RawPnpmLockfile;
 use refs::{DepRef, ImporterVersion, Key, NamedBindings, NextRef};
@@ -72,6 +73,34 @@ pub(super) fn to_raw(content: &str) -> Result<RawPnpmLockfile, String> {
         }
     }
     serde_json::from_value(v9).map_err(|err| err.to_string())
+}
+
+/// The v9 document `v9` as the text of a v13 lockfile. `overrides_order`
+/// is the order of the overrides of the lockfile being replaced, which the
+/// graph does not keep.
+pub(super) fn to_next(v9: &Value, overrides_order: &[String]) -> Result<String, String> {
+    write::to_next(v9, overrides_order)
+}
+
+/// The keys of the overrides of the lockfile `content`, in file order: the
+/// root `overrides` of a v9 file, or `settings.overrides` of a v13 one.
+/// Empty when the file does not parse.
+pub(super) fn overrides_order(content: &str) -> Vec<String> {
+    let content = normalized(content);
+    let Ok(document) = parse_document(main_document(&content)) else {
+        return Vec::new();
+    };
+    let overrides = if declares_next_format(&content) {
+        document
+            .get("settings")
+            .and_then(|settings| settings.get("overrides"))
+    } else {
+        document.get("overrides")
+    };
+    overrides
+        .and_then(Value::as_object)
+        .map(|overrides| overrides.keys().cloned().collect())
+        .unwrap_or_default()
 }
 
 /// `content` without a byte-order mark and with `\n` line ends.
@@ -296,6 +325,8 @@ struct ResolvedDep {
 struct Importer {
     /// `dependencies`, `devDependencies` and `optionalDependencies`.
     pub groups: [Option<BTreeMap<String, ResolvedDep>>; 3],
+    /// `skippedOptionalDependencies`, carried as it is.
+    pub skipped: Option<Value>,
 }
 
 impl Importer {
@@ -376,10 +407,20 @@ impl Next {
             Some(value) => read_importers(value)?,
             None => BTreeMap::new(),
         };
-        let implied = Implied::new(&catalogs, packages.keys(), &written);
+        let mut named = BTreeMap::new();
+        for (id, importer) in &written {
+            if let Some(name) = &importer.name {
+                claim(&mut named, name, id);
+            }
+        }
+        let implied = Implied::new(&catalogs, packages.keys(), one_to_one(named));
         let importers = written
-            .iter()
-            .map(|(id, (_, groups))| Ok((id.clone(), implied.resolve(id, groups)?)))
+            .into_iter()
+            .map(|(id, importer)| {
+                let mut resolved = implied.resolve(&id, &importer.groups)?;
+                resolved.skipped = importer.skipped;
+                Ok((id, resolved))
+            })
             .collect::<Result<_, String>>()?;
 
         Ok(Next {
@@ -399,6 +440,23 @@ impl Next {
     }
 
     fn into_v9(self) -> Result<Value, String> {
+        let restored = self.restore();
+        self.into_v9_with(restored)
+    }
+
+    /// The peer-suffixed keys and references the document stands for.
+    fn restore(&self) -> restore::Restored {
+        restore::restore(&restore::Input {
+            snapshots: self.snapshots.as_ref(),
+            importers: &self.importers,
+            packages: &self.packages,
+            patched: &self.patched,
+            rules: &self.rules,
+        })
+    }
+
+    /// The v9 document, with `restored` from [`Next::restore`].
+    fn into_v9_with(self, restored: restore::Restored) -> Result<Value, String> {
         let mut root = Map::new();
         root.insert("lockfileVersion".into(), json!("13.0"));
         if !self.settings.is_empty() {
@@ -444,13 +502,6 @@ impl Next {
             root.insert("patchedDependencies".into(), json!(self.patched));
         }
 
-        let restored = restore::restore(&restore::Input {
-            snapshots: self.snapshots.as_ref(),
-            importers: &self.importers,
-            packages: &self.packages,
-            patched: &self.patched,
-            rules: &self.rules,
-        });
         let importers: Map<String, Value> = self
             .importers
             .iter()
@@ -469,6 +520,9 @@ impl Next {
                         })
                         .collect();
                     out.insert((*group).into(), Value::Object(deps));
+                }
+                if let Some(skipped) = &importer.skipped {
+                    out.insert("skippedOptionalDependencies".into(), skipped.clone());
                 }
                 (id.clone(), Value::Object(out))
             })
@@ -875,8 +929,12 @@ fn read_patched(value: Option<&Value>) -> Result<BTreeMap<String, String>, Strin
         .collect()
 }
 
-/// Each importer's `name` and dependency groups, as written.
-type WrittenImporter = (Option<String>, [Option<BTreeMap<String, WrittenDep>>; 3]);
+/// An importer as written.
+struct WrittenImporter {
+    name: Option<String>,
+    groups: [Option<BTreeMap<String, WrittenDep>>; 3],
+    skipped: Option<Value>,
+}
 
 fn read_importers(value: &Value) -> Result<BTreeMap<String, WrittenImporter>, String> {
     let mut importers = BTreeMap::new();
@@ -898,7 +956,15 @@ fn read_importers(value: &Value) -> Result<BTreeMap<String, WrittenImporter>, St
             }
             *slot = Some(read);
         }
-        importers.insert(id.clone(), (name, groups));
+        let skipped = map.get("skippedOptionalDependencies").cloned();
+        importers.insert(
+            id.clone(),
+            WrittenImporter {
+                name,
+                groups,
+                skipped,
+            },
+        );
     }
     Ok(importers)
 }
@@ -944,10 +1010,11 @@ struct Implied<'a> {
 }
 
 impl<'a> Implied<'a> {
+    /// `linked` is each linked project's id, by package name.
     fn new<'k>(
         catalogs: &'a Catalogs,
         package_keys: impl Iterator<Item = &'k Key>,
-        importers: &BTreeMap<String, WrittenImporter>,
+        linked: BTreeMap<String, String>,
     ) -> Self {
         let mut injected: BTreeMap<String, Option<String>> = BTreeMap::new();
         for key in package_keys {
@@ -958,31 +1025,13 @@ impl<'a> Implied<'a> {
                     .or_insert_with(|| Some(path.to_string()));
             }
         }
-        let mut linked: BTreeMap<String, Option<String>> = BTreeMap::new();
-        let mut claims: BTreeMap<&str, usize> = BTreeMap::new();
-        for (id, (name, _)) in importers {
-            let Some(name) = name else { continue };
-            *claims.entry(id).or_default() += 1;
-            linked
-                .entry(name.clone())
-                .and_modify(|found| {
-                    if found.as_deref() != Some(id.as_str()) {
-                        *found = None;
-                    }
-                })
-                .or_insert_with(|| Some(id.clone()));
-        }
         Implied {
             catalogs,
             injected: injected
                 .into_iter()
                 .filter_map(|(name, path)| Some((name, path?)))
                 .collect(),
-            linked: linked
-                .into_iter()
-                .filter_map(|(name, id)| Some((name, id?)))
-                .filter(|(_, id)| claims.get(id.as_str()) == Some(&1))
-                .collect(),
+            linked,
         }
     }
 
@@ -1057,6 +1106,38 @@ impl<'a> Implied<'a> {
                 .to_string(),
         ))
     }
+}
+
+/// Records that `name` is the project `id`. A second, different claim
+/// voids the name.
+fn claim(claims: &mut BTreeMap<String, Option<String>>, name: &str, id: &str) {
+    claims
+        .entry(name.to_string())
+        .and_modify(|found| {
+            if found.as_deref() != Some(id) {
+                *found = None;
+            }
+        })
+        .or_insert_with(|| Some(id.to_string()));
+}
+
+/// The claims that stand, without the projects several names claim, since
+/// a project records one name.
+fn one_to_one(claims: BTreeMap<String, Option<String>>) -> BTreeMap<String, String> {
+    let by_name: BTreeMap<String, String> = claims
+        .into_iter()
+        .filter_map(|(name, id)| Some((name, id?)))
+        .collect();
+    let mut seen = BTreeSet::new();
+    let shared: BTreeSet<String> = by_name
+        .values()
+        .filter(|id| !seen.insert(id.as_str()))
+        .cloned()
+        .collect();
+    by_name
+        .into_iter()
+        .filter(|(_, id)| !shared.contains(id))
+        .collect()
 }
 
 /// The relative path from the project `from` to the project `to`.

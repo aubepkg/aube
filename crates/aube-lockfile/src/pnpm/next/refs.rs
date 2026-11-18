@@ -122,7 +122,7 @@ fn looks_like_alias(value: &str) -> bool {
 }
 
 /// A value of a snapshot's `dependencies` map.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) enum DepRef {
     Plain(VerPeer),
     Alias(Key),

@@ -43,9 +43,9 @@
       "exit_code": 16
     },
     {
-      "name": "ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY",
+      "name": "ERR_AUBE_PNPM_LOCKFILE_V13_NOT_REPRESENTABLE",
       "category": "Lockfile",
-      "description": "An install would change a pnpm lockfile written in pnpm's experimental version 13 format (`lockfile.format: v13`), which aube reads but does not write. aube refuses rather than rewrite the file at version 9.",
+      "description": "aube could not write a pnpm lockfile in pnpm's experimental version 13 format (`lockfile.format: v13`) because the file would not read back to the resolved dependency graph. aube refuses rather than write a lockfile that loses information.",
       "exit_code": 17
     },
     {

@@ -199,6 +199,11 @@ pub(crate) fn write_and_log_lockfile(
     let mut graph = graph.clone();
     graph.settings.extra =
         super::with_settings_ctx(cwd, super::install::resolve_lockfile_settings_extra);
+    if let Some(format) =
+        super::with_settings_ctx(cwd, super::install::resolve_pnpm_lockfile_format)
+    {
+        graph.settings.pnpm_lockfile_format = Some(format);
+    }
     let written_path = aube_lockfile::write_lockfile_as(cwd, &graph, manifest, kind)
         .map_err(miette::Report::new)
         .wrap_err("failed to write lockfile")?;

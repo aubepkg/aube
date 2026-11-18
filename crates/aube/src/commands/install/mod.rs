@@ -88,6 +88,7 @@ pub(crate) use settings::{
 };
 pub(crate) use settings::{
     resolve_catalog_prune, resolve_lockfile_settings, resolve_lockfile_settings_extra,
+    resolve_pnpm_lockfile_format,
 };
 pub(crate) use side_effects_cache::{SideEffectsCacheConfig, side_effects_cache_root};
 
@@ -2085,6 +2086,9 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 // still routes scoped packages through the right host.
                 // Non-registry packages (local_source Some) already
                 // carry their own URL and are left alone.
+                if let Some(format) = lockfile_settings.pnpm_lockfile_format {
+                    graph.settings.pnpm_lockfile_format = Some(format);
+                }
                 if lockfile_include_tarball_url {
                     graph.settings.lockfile_include_tarball_url = true;
                     for pkg in graph.packages.values_mut() {

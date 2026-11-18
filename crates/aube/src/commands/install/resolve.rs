@@ -300,6 +300,9 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
     // Reuses the resolver's `client` (already built above) to avoid
     // re-walking `.npmrc` and rebuilding the rustls client just to
     // construct registry URLs.
+    if let Some(format) = super::settings::resolve_pnpm_lockfile_format(settings_ctx) {
+        graph.settings.pnpm_lockfile_format = Some(format);
+    }
     if lockfile_include_tarball_url {
         let lo_client = client.as_ref();
         graph.settings.lockfile_include_tarball_url = true;
