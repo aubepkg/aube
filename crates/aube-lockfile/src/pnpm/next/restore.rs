@@ -31,6 +31,10 @@ pub(super) struct Input<'a> {
 pub(super) struct Restored {
     pub snapshots: Vec<(Key, SnapshotOut)>,
     importer_keys: HashMap<String, Vec<(String, Key)>>,
+    /// Each package's first snapshot and its count.
+    by_package: HashMap<Key, (Sid, usize)>,
+    /// Each snapshot's chosen children and the providers of its peers.
+    linked: Vec<HashMap<String, Sid>>,
 }
 
 impl Restored {
@@ -51,6 +55,34 @@ impl Restored {
             })
             .map_or_else(|| version.clone(), |key| version.with_key(key))
     }
+
+    /// The key of the importer dependency `alias` of `id`.
+    pub fn importer_key(&self, id: &str, alias: &str) -> Option<&Key> {
+        let children = self.importer_keys.get(id)?;
+        children
+            .binary_search_by(|(name, _)| compare_names(name, alias))
+            .ok()
+            .map(|at| &children[at].1)
+    }
+
+    fn sid(&self, package: &Key, index: usize) -> Option<Sid> {
+        let &(start, count) = self.by_package.get(package)?;
+        (index < count).then_some(start + index)
+    }
+
+    /// The rebuilt key of the snapshot at `index` of `package`.
+    pub fn snapshot_key(&self, package: &Key, index: usize) -> Option<&Key> {
+        self.sid(package, index).map(|sid| &self.snapshots[sid].0)
+    }
+
+    /// The rebuilt key of what that snapshot links as `alias`: a child it
+    /// chose, or the provider of a peer it binds.
+    pub fn child_key(&self, package: &Key, index: usize, alias: &str) -> Option<&Key> {
+        let sid = self.sid(package, index)?;
+        self.linked[sid]
+            .get(alias)
+            .map(|&child| &self.snapshots[child].0)
+    }
 }
 
 pub(super) fn restore(input: &Input<'_>) -> Restored {
@@ -58,6 +90,8 @@ pub(super) fn restore(input: &Input<'_>) -> Restored {
         return Restored {
             snapshots: Vec::new(),
             importer_keys: HashMap::new(),
+            by_package: HashMap::new(),
+            linked: Vec::new(),
         };
     };
     let graph = Graph::new(snapshots, input.importers);
@@ -83,9 +117,30 @@ pub(super) fn restore(input: &Input<'_>) -> Restored {
             (id.to_string(), children)
         })
         .collect();
+    let linked = (0..graph.keys.len())
+        .map(|sid| {
+            let providers =
+                graph.providers[sid]
+                    .iter()
+                    .filter_map(|(name, provider)| match provider {
+                        Provider::Snapshot(provider) => Some((name.to_string(), *provider)),
+                        Provider::Link(_) | Provider::Missing(_) => None,
+                    });
+            let children = graph.children[sid]
+                .iter()
+                .map(|&(name, child)| (name.to_string(), child));
+            providers.chain(children).collect()
+        })
+        .collect();
     Restored {
         snapshots,
         importer_keys,
+        by_package: graph
+            .by_package
+            .iter()
+            .map(|(&key, &place)| (key.clone(), place))
+            .collect(),
+        linked,
     }
 }
 

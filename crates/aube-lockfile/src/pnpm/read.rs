@@ -94,7 +94,8 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
 
 pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<LockfileGraph, Error> {
     let content = crate::read_lockfile(path)?;
-    let raw = if super::next::declares_next_format(&content) {
+    let next_format = super::next::declares_next_format(&content);
+    let raw = if next_format {
         super::next::to_raw(&content).map_err(|message| Error::parse(path, message))?
     } else {
         let raw = parse_raw_lockfile(&content)
@@ -1081,15 +1082,21 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
 
     adopt_link_dependency_edges(&mut packages);
 
-    let settings = raw
+    let mut settings = raw
         .settings
         .map(|s| crate::LockfileSettings {
             auto_install_peers: s.auto_install_peers.unwrap_or(true),
             exclude_links_from_lockfile: s.exclude_links_from_lockfile.unwrap_or(false),
             lockfile_include_tarball_url: s.lockfile_include_tarball_url.unwrap_or(false),
+            pnpm_lockfile_format: None,
             extra: s.extra,
         })
         .unwrap_or_default();
+    // A graph read from a v13 file is written back at v13, also where no
+    // file is replaced (`deploy`, per-project lockfiles).
+    if next_format {
+        settings.pnpm_lockfile_format = Some(crate::PnpmLockfileFormat::V13);
+    }
 
     let times = raw.time.unwrap_or_default();
 

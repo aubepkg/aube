@@ -236,7 +236,10 @@ fn leading_environment_document(path: &Path) -> Option<String> {
     None
 }
 
-/// Write a LockfileGraph as pnpm-lock.yaml v9 format to `path`.
+/// Write a LockfileGraph as a pnpm lockfile to `path`: at v9, or at v13
+/// for a `pnpm-lock.yaml` whose graph asks for it
+/// ([`crate::LockfileSettings::pnpm_lockfile_format`]) or, when it does
+/// not say, that replaces a v13 file.
 /// `project_root` is the directory the graph's importer keys and local
 /// paths are relative to: the lockfile's own directory for a project
 /// lockfile, but not for a copy kept under `node_modules`.
@@ -246,25 +249,31 @@ pub fn write_with_project_root(
     graph: &LockfileGraph,
     manifest: &PackageJson,
 ) -> Result<(), Error> {
-    // aube writes only v9, so writing over pnpm's v13 format would
-    // silently change the format of a file pnpm owns.
-    // A file that exists but cannot be read may still be v13, so only a
-    // missing one is safe to write.
-    let declares_v13 = match std::fs::read_to_string(path) {
-        Ok(existing) => super::next::declares_next_format(&existing),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
-        Err(err) => return Err(Error::Io(path.to_path_buf(), err)),
-    };
-    if declares_v13 {
-        return Err(Error::PnpmLockfileV13ReadOnly {
-            path: path.to_path_buf(),
-        });
-    }
     let environment = leading_environment_document(path);
     let native_pnpm_aliases = path
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(is_pnpm_lockfile_name);
+    let requested_format = graph.settings.pnpm_lockfile_format;
+    // A file that exists but cannot be read is not replaced, even when the
+    // graph names a format: its format and its environment document are
+    // unknown.
+    let existing = if native_pnpm_aliases {
+        match std::fs::read_to_string(path) {
+            Ok(content) => Some(content),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => return Err(Error::Io(path.to_path_buf(), err)),
+        }
+    } else {
+        None
+    };
+    let next_format = native_pnpm_aliases
+        && match requested_format {
+            Some(format) => format == crate::PnpmLockfileFormat::V13,
+            None => existing
+                .as_deref()
+                .is_some_and(super::next::declares_next_format),
+        };
     // Patch identities are part of the pnpm v9 format itself, so
     // aube-lock.yaml records them too; otherwise the same patched
     // package serializes differently depending on whether the graph
@@ -1031,11 +1040,29 @@ pub fn write_with_project_root(
         snapshots,
     };
 
-    let yaml = yaml_serde::to_string(&lockfile).map_err(|e| Error::parse(path, e.to_string()))?;
-    let yaml = reformat_for_pnpm_parity(&yaml);
+    let body = if next_format {
+        let document =
+            serde_json::to_value(&lockfile).map_err(|e| Error::parse(path, e.to_string()))?;
+        // The graph keeps overrides sorted, and pnpm writes them in
+        // config order, which the replaced file still has.
+        let overrides_order = existing
+            .as_deref()
+            .map(super::next::overrides_order)
+            .unwrap_or_default();
+        super::next::to_next(&document, &overrides_order).map_err(|reason| {
+            Error::PnpmLockfileV13NotRepresentable {
+                path: path.to_path_buf(),
+                reason,
+            }
+        })?
+    } else {
+        let yaml =
+            yaml_serde::to_string(&lockfile).map_err(|e| Error::parse(path, e.to_string()))?;
+        reformat_for_pnpm_parity(&yaml)
+    };
     let yaml = match environment {
-        Some(environment) => environment + &yaml,
-        None => yaml,
+        Some(environment) => environment + &body,
+        None => body,
     };
     // Atomic via tempfile + persist. Crash, Ctrl+C, or AV
     // quarantine during the write used to leave the user with a
@@ -1220,9 +1247,12 @@ fn existing_unmodeled_settings(path: &Path) -> BTreeMap<String, serde_json::Valu
     let Ok(content) = crate::read_lockfile(path) else {
         return BTreeMap::new();
     };
-    super::raw::parse_raw_lockfile(&content)
-        .ok()
-        .and_then(|raw| raw.settings)
+    let raw = if super::next::declares_next_format(&content) {
+        super::next::to_raw(&content).ok()
+    } else {
+        super::raw::parse_raw_lockfile(&content).ok()
+    };
+    raw.and_then(|raw| raw.settings)
         .map(|settings| settings.extra)
         .unwrap_or_default()
 }

@@ -277,6 +277,16 @@ pub struct RuntimeTarget {
     pub libc: Option<String>,
 }
 
+/// A `pnpm-lock.yaml` format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PnpmLockfileFormat {
+    /// `lockfileVersion: '9.0'`, the format of pnpm 9 and newer.
+    V9,
+    /// `lockfileVersion: '13.0'`, pnpm's experimental format
+    /// (`lockfile.format: v13` in `pnpm-workspace.yaml`).
+    V13,
+}
+
 /// Per-graph settings that mirror pnpm v9's `settings:` header.
 /// Extend as more knobs become round-trip-aware.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -295,6 +305,12 @@ pub struct LockfileSettings {
     /// `settings:` header so it survives parse/write cycles without
     /// re-reading `.npmrc`.
     pub lockfile_include_tarball_url: bool,
+    /// The format to write a `pnpm-lock.yaml` in: pnpm's `lockfile.format`
+    /// setting, or the format the graph was read from. `None` keeps the
+    /// format of the file being replaced, and writes a new file at v9.
+    /// Not recorded in the lockfile, and ignored for `aube-lock.yaml`,
+    /// which is always v9.
+    pub pnpm_lockfile_format: Option<PnpmLockfileFormat>,
     /// Every other `settings:` entry (`dedupePeers`,
     /// `injectWorkspacePackages`, `peersSuffixMaxLength`, …). Fresh
     /// resolves fill this from the current configuration; a parsed
@@ -308,6 +324,7 @@ impl Default for LockfileSettings {
             auto_install_peers: true,
             exclude_links_from_lockfile: false,
             lockfile_include_tarball_url: false,
+            pnpm_lockfile_format: None,
             extra: BTreeMap::new(),
         }
     }
@@ -1199,6 +1216,11 @@ impl LockfileGraph {
         }
         if self.bun_config_version.is_none() {
             self.bun_config_version = prior.bun_config_version;
+        }
+        // A fresh resolve does not know the format of the lockfile it
+        // replaces, which per-project and deploy lockfiles keep.
+        if self.settings.pnpm_lockfile_format.is_none() {
+            self.settings.pnpm_lockfile_format = prior.settings.pnpm_lockfile_format;
         }
         if self.patched_dependencies.is_empty() {
             self.patched_dependencies = prior.patched_dependencies.clone();

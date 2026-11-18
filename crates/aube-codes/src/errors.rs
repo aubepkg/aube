@@ -19,7 +19,7 @@ pub const ERR_AUBE_RESOLUTION_SHAPE_MISMATCH: &str = "ERR_AUBE_RESOLUTION_SHAPE_
 pub const ERR_AUBE_LOCKFILE_CONFIG_MISMATCH: &str = "ERR_AUBE_LOCKFILE_CONFIG_MISMATCH";
 pub const ERR_AUBE_UNSUPPORTED_NAMED_REGISTRY: &str = "ERR_AUBE_UNSUPPORTED_NAMED_REGISTRY";
 #[rustfmt::skip] pub const ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION: &str = "ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION";
-pub const ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY: &str = "ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY";
+#[rustfmt::skip] pub const ERR_AUBE_PNPM_LOCKFILE_V13_NOT_REPRESENTABLE: &str = "ERR_AUBE_PNPM_LOCKFILE_V13_NOT_REPRESENTABLE";
 
 // ── resolver ─────────────────────────────────────────────────────────
 pub const ERR_AUBE_NO_MATCHING_VERSION: &str = "ERR_AUBE_NO_MATCHING_VERSION";
@@ -203,9 +203,9 @@ pub const ALL: &[CodeMeta] = &[
         exit_code: Some(16),
     },
     CodeMeta {
-        name: ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY,
+        name: ERR_AUBE_PNPM_LOCKFILE_V13_NOT_REPRESENTABLE,
         category: category::LOCKFILE,
-        description: "An install would change a pnpm lockfile written in pnpm's experimental version 13 format (`lockfile.format: v13`), which aube reads but does not write. aube refuses rather than rewrite the file at version 9.",
+        description: "aube could not write a pnpm lockfile in pnpm's experimental version 13 format (`lockfile.format: v13`) because the file would not read back to the resolved dependency graph. aube refuses rather than write a lockfile that loses information.",
         exit_code: Some(17),
     },
     // Resolver

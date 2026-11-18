@@ -1677,6 +1677,31 @@ examples = [
   "echo 'lockfile-include-tarball-url=true' >> .npmrc && aube install",
 ]
 
+[lockfileFormat]
+description = "Format to write pnpm-lock.yaml in: pnpm's version 9 or its experimental version 13."
+type = '"v9" | "v13"'
+default = "undefined"
+docs = """
+pnpm's `lockfile.format` setting. `v13` writes `pnpm-lock.yaml` in pnpm's
+experimental version 13 format, `v9` in version 9. When unset, aube keeps
+the format of the existing `pnpm-lock.yaml` and writes a new one at
+version 9.
+
+As in pnpm, the format applies when the lockfile is written: a lockfile in
+the other format is not out of date, so an install that changes nothing
+leaves it as it is, and `--frozen-lockfile` accepts it.
+
+Only `pnpm-lock.yaml` is affected. `aube-lock.yaml` is always written in
+version 9.
+"""
+sources.cli = []
+sources.env = ["npm_config_lockfile_format", "NPM_CONFIG_LOCKFILE_FORMAT", "AUBE_LOCKFILE_FORMAT"]
+sources.npmrc = []
+sources.workspaceYaml = ["lockfile.format"]
+examples = [
+  "printf 'lockfile:\\n  format: v13\\n' >> pnpm-workspace.yaml && aube install",
+]
+
 [excludeLinksFromLockfile]
 description = "Skip local `link:` dependencies when writing the lockfile."
 type = "bool"

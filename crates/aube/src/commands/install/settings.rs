@@ -589,8 +589,21 @@ pub(crate) fn resolve_lockfile_settings(
         auto_install_peers: aube_settings::resolved::auto_install_peers(ctx),
         exclude_links_from_lockfile: aube_settings::resolved::exclude_links_from_lockfile(ctx),
         lockfile_include_tarball_url: aube_settings::resolved::lockfile_include_tarball_url(ctx),
+        pnpm_lockfile_format: resolve_pnpm_lockfile_format(ctx),
         extra: resolve_lockfile_settings_extra(ctx),
     }
+}
+
+/// pnpm's `lockfile.format`: the format to write `pnpm-lock.yaml` in.
+/// `None` keeps the format of the existing file.
+pub(crate) fn resolve_pnpm_lockfile_format(
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> Option<aube_lockfile::PnpmLockfileFormat> {
+    use aube_settings::resolved::LockfileFormat;
+    Some(match aube_settings::resolved::lockfile_format(ctx)? {
+        LockfileFormat::V9 => aube_lockfile::PnpmLockfileFormat::V9,
+        LockfileFormat::V13 => aube_lockfile::PnpmLockfileFormat::V13,
+    })
 }
 
 /// Resolve `resolvePeersFromWorkspaceRoot` from `.npmrc` / workspace

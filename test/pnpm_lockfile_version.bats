@@ -249,9 +249,8 @@ assert_output_unwrapped() {
 
 # pnpm 12.19+ writes lockfile version 13 (JSON with trailing commas,
 # no `snapshots`) when pnpm-workspace.yaml sets `lockfile.format: v13`.
-# aube reads it but writes only version 9, so it must never rewrite
-# the file. The fixture is what pnpm 12.21 wrote for this project
-# against the test registry.
+# aube reads it and writes it back the way pnpm does. The fixture is
+# what pnpm 12.21 wrote for this project against the test registry.
 _setup_pnpm_v13_project() {
 	cat >package.json <<-'EOF'
 		{
@@ -295,7 +294,7 @@ _setup_pnpm_v13_project() {
 	assert_success
 }
 
-@test "pnpm lockfileVersion 13 is not rewritten when the install changes it" {
+@test "pnpm lockfileVersion 13 stays version 13 when the install changes it" {
 	_setup_pnpm_v13_project
 	cat >package.json <<-'EOF'
 		{
@@ -309,10 +308,65 @@ _setup_pnpm_v13_project() {
 		  }
 		}
 	EOF
+	# Without the setting too: an existing v13 lockfile keeps its format.
+	rm pnpm-workspace.yaml
 
 	run aube install
-	assert_equal "$status" 17
-	assert_output --partial "ERR_AUBE_PNPM_LOCKFILE_V13_READ_ONLY"
+	assert_success
+	assert [ -f node_modules/is-even/package.json ]
+	run head -2 pnpm-lock.yaml
+	assert_output "$(printf '{\n\t"lockfileVersion": "13.0",')"
+	run grep -c '"is-even@1.0.0": {' pnpm-lock.yaml
+	assert_output 1
+
+	rm -rf node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	assert [ -f node_modules/is-even/package.json ]
+	assert [ -d node_modules/.aube/react-dom@18.3.1_react@18.3.1 ]
+}
+
+@test "lockfile.format v13 writes a new pnpm lockfile as version 13" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "test-pnpm-v13-new",
+		  "version": "1.0.0",
+		  "dependencies": {
+		    "is-odd": "^3.0.1",
+		    "react": "18.3.1",
+		    "react-dom": "18.3.1"
+		  }
+		}
+	EOF
+	printf 'lockfile:\n  format: v13\n' >pnpm-workspace.yaml
+	echo 'default-lockfile-format=pnpm' >.npmrc
+
+	run aube install
+	assert_success
 	run cmp pnpm-lock.yaml "$PROJECT_ROOT/test/fixtures/pnpm-v13/pnpm-lock.yaml"
 	assert_success
+
+	# Rewritten from the copy under node_modules, which is version 9.
+	rm pnpm-lock.yaml
+	run aube install
+	assert_success
+	run cmp pnpm-lock.yaml "$PROJECT_ROOT/test/fixtures/pnpm-v13/pnpm-lock.yaml"
+	assert_success
+}
+
+@test "lockfile.format v9 writes a version 13 lockfile back as version 9" {
+	_setup_pnpm_v13_project
+	printf 'lockfile:\n  format: v9\n' >pnpm-workspace.yaml
+
+	# Like pnpm, the format applies when the lockfile is written: an
+	# install that changes nothing leaves it alone.
+	run aube install --frozen-lockfile
+	assert_success
+	run cmp pnpm-lock.yaml "$PROJECT_ROOT/test/fixtures/pnpm-v13/pnpm-lock.yaml"
+	assert_success
+
+	run aube add is-even@1.0.0
+	assert_success
+	run head -1 pnpm-lock.yaml
+	assert_output "lockfileVersion: '9.0'"
 }
