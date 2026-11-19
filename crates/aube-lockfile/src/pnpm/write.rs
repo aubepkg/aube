@@ -323,14 +323,18 @@ pub fn write_with_project_root(
             .or_else(|| pkg.and_then(patch_hash_for));
         Some(with_patch_hash(&translated, hash))
     };
-    // A local package that carries peers has one snapshot per peer context,
-    // keyed `<name>@<spec>(<peer>@<version>)` like a registry package. Without
-    // the suffix, importers that resolve different peer versions would share
-    // one key and the later snapshot would overwrite the earlier.
-    let peer_suffix = |dep_path: &str| -> String {
-        dep_path
-            .find('(')
-            .map_or_else(String::new, |i| dep_path[i..].to_string())
+    // A git or remote-tarball package that carries peers has one snapshot per
+    // peer context, keyed `<name>@<spec>(<peer>@<version>)` like a registry
+    // package. Without the suffix, importers that resolve different peer
+    // versions would share one key and the later snapshot would overwrite the
+    // earlier. The reader keys the same two kinds by context.
+    let peer_suffix = |local: &LocalSource, dep_path: &str| -> String {
+        match local {
+            LocalSource::Git(_) | LocalSource::RemoteTarball(_) => dep_path
+                .find('(')
+                .map_or_else(String::new, |i| dep_path[i..].to_string()),
+            _ => String::new(),
+        }
     };
     let decorate_patch_hash = |value: &str, pkg: Option<&crate::LockedPackage>| -> String {
         let rewritten = rewrite_peer_suffix(value, &peer_reference_to_spec);
@@ -431,7 +435,7 @@ pub fn write_with_project_root(
                             relative_to_importer(path, importer_path, &project_root)
                         )
                     }
-                    _ => format!("{}{}", local.specifier(), peer_suffix(&dep.dep_path)),
+                    _ => format!("{}{}", local.specifier(), peer_suffix(local, &dep.dep_path)),
                 }
             } else if !graph.packages.contains_key(&dep.dep_path)
                 && let Some(member) = workspace_links.get(&dep.dep_path)
@@ -891,7 +895,7 @@ pub fn write_with_project_root(
                 let rewritten = if let Some(target) = target
                     && let Some(ref local) = target.local_source
                 {
-                    format!("{}{}", local.specifier(), peer_suffix(&value))
+                    format!("{}{}", local.specifier(), peer_suffix(local, &value))
                 } else if target.is_none()
                     && let Some(member) = workspace_links.get(&dp)
                 {
@@ -922,7 +926,7 @@ pub fn write_with_project_root(
                 "{}@{}{}",
                 pkg.name,
                 local.specifier(),
-                peer_suffix(dep_path)
+                peer_suffix(local, dep_path)
             ),
             None => {
                 if native_pnpm_aliases && let Some(real_name) = pkg.alias_of.as_deref() {

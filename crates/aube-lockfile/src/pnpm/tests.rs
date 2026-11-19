@@ -6269,3 +6269,71 @@ snapshots:
         peery_dep_path("a")
     );
 }
+
+#[test]
+fn transitive_tarball_peer_variant_keeps_its_own_package() {
+    // The importer installs `peery` with `is-odd@3.0.1`, while a registry
+    // package pulls the same URL in with `is-odd@2.0.0`. The second context
+    // has no importer entry and must still get its own package.
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    let url = "https://codeload.github.com/o/peery/tar.gz/0123456789abcdef0123456789abcdef01234567";
+    let src = format!(
+        r#"lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      is-odd:
+        specifier: 3.0.1
+        version: 3.0.1
+      peery:
+        specifier: {url}
+        version: {url}(is-odd@3.0.1)
+
+packages:
+
+  is-odd@2.0.0:
+    resolution: {{integrity: sha512-xxx}}
+
+  is-odd@3.0.1:
+    resolution: {{integrity: sha512-yyy}}
+
+  peery@{url}:
+    resolution: {{gitHosted: true, tarball: {url}}}
+    version: 1.0.0
+    peerDependencies:
+      is-odd: '*'
+
+snapshots:
+
+  is-odd@2.0.0: {{}}
+
+  is-odd@3.0.1: {{}}
+
+  peery@{url}(is-odd@2.0.0):
+    dependencies:
+      is-odd: 2.0.0
+
+  peery@{url}(is-odd@3.0.1):
+    dependencies:
+      is-odd: 3.0.1
+"#
+    );
+    std::fs::write(&lockfile_path, src).unwrap();
+    let graph = parse(&lockfile_path).unwrap();
+    let variants: Vec<_> = graph
+        .packages
+        .values()
+        .filter(|p| p.name == "peery")
+        .collect();
+    assert_eq!(variants.len(), 2, "{:?}", graph.packages.keys());
+    for variant in ["2.0.0", "3.0.1"] {
+        let pkg = variants
+            .iter()
+            .find(|p| p.dep_path.ends_with(&format!("(is-odd@{variant})")))
+            .unwrap_or_else(|| panic!("no peery variant for is-odd@{variant}"));
+        assert_eq!(pkg.dependencies["is-odd"], variant);
+    }
+}

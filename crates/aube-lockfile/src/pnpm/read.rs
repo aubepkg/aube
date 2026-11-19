@@ -741,7 +741,15 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         // appended. Check the peer-stripped canonical too so we don't
         // create a duplicate entry that round-trips as a stray
         // `packages:` block.
-        if local_canonical_keys.contains(&format!("{name}@{version}")) {
+        // A git or remote-tarball snapshot with a peer suffix that no
+        // importer contributed is a transitive peer context of its own and
+        // still needs a package entry.
+        let transitive_url_variant = dep_path.contains('(')
+            && matches!(
+                LocalSource::parse(&version, Path::new("")),
+                Some(LocalSource::Git(_) | LocalSource::RemoteTarball(_))
+            );
+        if !transitive_url_variant && local_canonical_keys.contains(&format!("{name}@{version}")) {
             continue;
         }
 
