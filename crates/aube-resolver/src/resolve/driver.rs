@@ -1667,7 +1667,7 @@ impl<'a> ResolveDriver<'a> {
             if let LocalSource::Git(ref g) = raw_local {
                 let shallow =
                     aube_store::git_host_in_list(&g.url, &self.resolver.git_shallow_hosts);
-                let (resolved_local, version, deps, integrity) =
+                let (resolved_local, manifest, integrity) =
                     resolve_git_source(&task.name, g, shallow, Some(self.resolver.client.as_ref()))
                         .await
                         .map_err(|e| {
@@ -1679,13 +1679,21 @@ impl<'a> ResolveDriver<'a> {
                 let integrity = integrity.or_else(|| {
                     self.locked_index.find_local_source_integrity(
                         &task.name,
-                        &version,
+                        &manifest.version,
                         &resolved_local,
                     )
                 });
-                (resolved_local, version, deps, BTreeMap::new(), integrity)
+                local_peers = manifest.peer_dependencies;
+                local_peers_meta = manifest.peer_dependencies_meta;
+                (
+                    resolved_local,
+                    manifest.version,
+                    manifest.dependencies,
+                    BTreeMap::new(),
+                    integrity,
+                )
             } else if let LocalSource::RemoteTarball(ref t) = raw_local {
-                let (resolved_local, version, deps) =
+                let (resolved_local, manifest) =
                     resolve_remote_tarball(&task.name, t, self.resolver.client.as_ref())
                         .await
                         .map_err(|e| {
@@ -1700,7 +1708,15 @@ impl<'a> ResolveDriver<'a> {
                     }
                     _ => None,
                 };
-                (resolved_local, version, deps, BTreeMap::new(), integrity)
+                local_peers = manifest.peer_dependencies;
+                local_peers_meta = manifest.peer_dependencies_meta;
+                (
+                    resolved_local,
+                    manifest.version,
+                    manifest.dependencies,
+                    BTreeMap::new(),
+                    integrity,
+                )
             } else {
                 // Rewrite the path to be relative to the project root so
                 // every downstream consumer can resolve it with a single

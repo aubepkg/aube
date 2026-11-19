@@ -187,25 +187,7 @@ pub(crate) fn read_local_manifest(
     let pj: aube_manifest::PackageJson = sonic_rs::from_slice(&content)
         .or_else(|_| serde_json::from_slice(&content))
         .map_err(|e| Error::Registry(local.specifier(), e.to_string()))?;
-    // A peer declared only in `peerDependenciesMeta` still counts as a
-    // peer (range `*`), matching how registry packuments are read.
-    let peer_dependencies_meta: BTreeMap<String, aube_lockfile::PeerDepMeta> = pj
-        .extra
-        .get("peerDependenciesMeta")
-        .and_then(serde_json::Value::as_object)
-        .into_iter()
-        .flat_map(|meta| meta.keys())
-        .map(|name| {
-            let optional = pj.peer_dependency_is_optional(name);
-            (name.clone(), aube_lockfile::PeerDepMeta { optional })
-        })
-        .collect();
-    let mut peer_dependencies = pj.peer_dependencies.clone();
-    for name in peer_dependencies_meta.keys() {
-        peer_dependencies
-            .entry(name.clone())
-            .or_insert_with(|| "*".to_string());
-    }
+    let (peer_dependencies, peer_dependencies_meta) = declared_peers(&pj);
     let bundled_dependencies = match (&pj.bundled_dependencies, local) {
         (Some(bundled), LocalSource::Tarball(_)) => bundled
             .names(&pj.dependencies)
@@ -224,6 +206,55 @@ pub(crate) fn read_local_manifest(
         peer_dependencies,
         peer_dependencies_meta,
     })
+}
+
+/// A package's declared peers and their optionality. A peer declared only
+/// in `peerDependenciesMeta` still counts as a peer (range `*`), matching
+/// how registry packuments are read.
+fn declared_peers(
+    pj: &aube_manifest::PackageJson,
+) -> (
+    BTreeMap<String, String>,
+    BTreeMap<String, aube_lockfile::PeerDepMeta>,
+) {
+    let meta: BTreeMap<String, aube_lockfile::PeerDepMeta> = pj
+        .extra
+        .get("peerDependenciesMeta")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flat_map(|meta| meta.keys())
+        .map(|name| {
+            let optional = pj.peer_dependency_is_optional(name);
+            (name.clone(), aube_lockfile::PeerDepMeta { optional })
+        })
+        .collect();
+    let mut peers = pj.peer_dependencies.clone();
+    for name in meta.keys() {
+        peers.entry(name.clone()).or_insert_with(|| "*".to_string());
+    }
+    (peers, meta)
+}
+
+/// The manifest fields the resolver needs from a git checkout or a remote
+/// tarball.
+#[derive(Debug)]
+pub(crate) struct FetchedManifest {
+    pub version: String,
+    pub dependencies: BTreeMap<String, String>,
+    pub peer_dependencies: BTreeMap<String, String>,
+    pub peer_dependencies_meta: BTreeMap<String, aube_lockfile::PeerDepMeta>,
+}
+
+impl FetchedManifest {
+    fn from_package_json(pj: aube_manifest::PackageJson) -> Self {
+        let (peer_dependencies, peer_dependencies_meta) = declared_peers(&pj);
+        Self {
+            version: pj.version.unwrap_or_else(|| "0.0.0".to_string()),
+            dependencies: pj.dependencies,
+            peer_dependencies,
+            peer_dependencies_meta,
+        }
+    }
 }
 
 /// Read the declared package name from a local source before adding it to a
@@ -413,7 +444,7 @@ fn read_git_package_manifest(
     pkg_root: &Path,
     location: &str,
     subpath: Option<&str>,
-) -> Result<(String, BTreeMap<String, String>), Error> {
+) -> Result<FetchedManifest, Error> {
     let where_ = subpath.map(|s| format!(" at /{s}")).unwrap_or_default();
     let meta = std::fs::metadata(pkg_root).map_err(|e| {
         Error::Registry(
@@ -440,7 +471,12 @@ fn read_git_package_manifest(
                 root = %pkg_root.display(),
                 "git dependency has no package.json; resolving as version 0.0.0 with no dependencies",
             );
-            return Ok(("0.0.0".to_string(), BTreeMap::new()));
+            return Ok(FetchedManifest {
+                version: "0.0.0".to_string(),
+                dependencies: BTreeMap::new(),
+                peer_dependencies: BTreeMap::new(),
+                peer_dependencies_meta: BTreeMap::new(),
+            });
         }
         Err(e) => {
             return Err(Error::Registry(
@@ -457,10 +493,7 @@ fn read_git_package_manifest(
                 format!("parse package.json in {location}{where_}: {e}"),
             )
         })?;
-    Ok((
-        pj.version.unwrap_or_else(|| "0.0.0".to_string()),
-        pj.dependencies,
-    ))
+    Ok(FetchedManifest::from_package_json(pj))
 }
 
 /// Turn a raw `GitSource` (committish parsed from the user's
@@ -486,15 +519,7 @@ pub(crate) async fn resolve_git_source(
     git: &aube_lockfile::GitSource,
     shallow: bool,
     client: Option<&RegistryClient>,
-) -> Result<
-    (
-        LocalSource,
-        String,
-        BTreeMap<String, String>,
-        Option<String>,
-    ),
-    Error,
-> {
+) -> Result<(LocalSource, FetchedManifest, Option<String>), Error> {
     let original_url = git.url.clone();
     let committish = git.committish.clone();
     let subpath = git.subpath.clone();
@@ -556,7 +581,7 @@ pub(crate) async fn resolve_git_source(
             Some(sub) => clone_dir.join(sub),
             None => clone_dir.clone(),
         };
-        let (version, deps) = read_git_package_manifest(
+        let manifest = read_git_package_manifest(
             name,
             &pkg_root,
             "cached codeload extract",
@@ -571,8 +596,7 @@ pub(crate) async fn resolve_git_source(
                 git.integrity.clone(),
                 codeload_url.as_deref(),
             ),
-            version,
-            deps,
+            manifest,
             integrity,
         ));
     }
@@ -613,13 +637,13 @@ pub(crate) async fn resolve_git_source(
                         Some(sub) => clone_dir.join(sub),
                         None => clone_dir.clone(),
                     };
-                    let (version, deps) = read_git_package_manifest(
+                    let manifest = read_git_package_manifest(
                         &name_for_extract,
                         &pkg_root,
                         "codeload extract",
                         subpath_for_extract.as_deref(),
                     )?;
-                    Ok((resolved, version, deps))
+                    Ok((resolved, manifest))
                 })
                 .await
                 .map_err(|e| {
@@ -627,7 +651,7 @@ pub(crate) async fn resolve_git_source(
                 })?;
                 let integrity = aube_store::sha512_integrity(&bytes);
                 match extracted {
-                    Ok((resolved, version, deps)) => {
+                    Ok((resolved, manifest)) => {
                         return Ok((
                             hosted_git_local_source(
                                 original_url,
@@ -637,8 +661,7 @@ pub(crate) async fn resolve_git_source(
                                 Some(integrity.clone()),
                                 Some(url_to_fetch),
                             ),
-                            version,
-                            deps,
+                            manifest,
                             Some(integrity),
                         ));
                     }
@@ -678,7 +701,7 @@ pub(crate) async fn resolve_git_source(
     let resolved_sha_for_clone = resolved_sha.clone();
     let subpath_for_clone = subpath.clone();
     let name_for_clone = name.to_string();
-    let (local, version, deps) = tokio::task::spawn_blocking(move || -> Result<_, Error> {
+    let (local, manifest) = tokio::task::spawn_blocking(move || -> Result<_, Error> {
         let (clone_dir, resolved) =
             aube_store::git_shallow_clone(&runtime_url_for_clone, &resolved_sha_for_clone, shallow)
                 .map_err(|e| Error::Registry(name_for_clone.clone(), e.to_string()))?;
@@ -686,7 +709,7 @@ pub(crate) async fn resolve_git_source(
             Some(sub) => clone_dir.join(sub),
             None => clone_dir.clone(),
         };
-        let (version, deps) = read_git_package_manifest(
+        let manifest = read_git_package_manifest(
             &name_for_clone,
             &pkg_root,
             "clone",
@@ -700,13 +723,12 @@ pub(crate) async fn resolve_git_source(
                 integrity: None,
                 subpath: subpath_for_clone,
             }),
-            version,
-            deps,
+            manifest,
         ))
     })
     .await
     .map_err(|e| Error::Registry(name.to_string(), format!("git task panicked: {e}")))??;
-    Ok((local, version, deps, None))
+    Ok((local, manifest, None))
 }
 
 /// Fetch a remote tarball URL, compute its sha512 integrity, and read
@@ -717,7 +739,7 @@ pub(crate) async fn resolve_remote_tarball(
     name: &str,
     tarball: &aube_lockfile::RemoteTarballSource,
     client: &RegistryClient,
-) -> Result<(LocalSource, String, BTreeMap<String, String>), Error> {
+) -> Result<(LocalSource, FetchedManifest), Error> {
     let bytes = client
         .fetch_tarball_bytes(&tarball.url)
         .await
@@ -729,7 +751,7 @@ pub(crate) async fn resolve_remote_tarball(
         })?;
     let name_owned = name.to_string();
     let url = aube_util::url::redact_url(&tarball.url);
-    let (integrity, version, deps) = tokio::task::spawn_blocking(move || -> Result<_, Error> {
+    let (integrity, manifest) = tokio::task::spawn_blocking(move || -> Result<_, Error> {
         let integrity = aube_store::sha512_integrity(&bytes);
 
         // Walk the tarball once to pull out the top-level
@@ -740,8 +762,7 @@ pub(crate) async fn resolve_remote_tarball(
             .map_err(|e| Error::Registry(name_owned.clone(), format!("tarball {url}: {e}")))?;
         let pj: aube_manifest::PackageJson = serde_json::from_slice(&manifest_bytes)
             .map_err(|e| Error::Registry(name_owned.clone(), e.to_string()))?;
-        let version = pj.version.unwrap_or_else(|| "0.0.0".to_string());
-        Ok((integrity, version, pj.dependencies))
+        Ok((integrity, FetchedManifest::from_package_json(pj)))
     })
     .await
     .map_err(|e| Error::Registry(name.to_string(), format!("tarball task panicked: {e}")))??;
@@ -751,8 +772,7 @@ pub(crate) async fn resolve_remote_tarball(
             integrity,
             git_hosted: tarball.git_hosted,
         }),
-        version,
-        deps,
+        manifest,
     ))
 }
 
@@ -1034,11 +1054,26 @@ mod git_package_manifest_tests {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("schema.json"), "{}").unwrap();
 
-        let (version, deps) =
-            read_git_package_manifest("asset-only", temp.path(), "clone", None).unwrap();
+        let manifest = read_git_package_manifest("asset-only", temp.path(), "clone", None).unwrap();
 
-        assert_eq!(version, "0.0.0");
-        assert!(deps.is_empty());
+        assert_eq!(manifest.version, "0.0.0");
+        assert!(manifest.dependencies.is_empty());
+    }
+
+    #[test]
+    fn git_package_manifest_reports_declared_peers() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("package.json"),
+            r#"{"name":"p","version":"1.0.0","peerDependencies":{"vite":"^8.3.5"},"peerDependenciesMeta":{"vite":{"optional":false},"sass":{"optional":true}}}"#,
+        )
+        .unwrap();
+
+        let manifest = read_git_package_manifest("p", temp.path(), "clone", None).unwrap();
+
+        assert_eq!(manifest.peer_dependencies["vite"], "^8.3.5");
+        assert_eq!(manifest.peer_dependencies["sass"], "*");
+        assert!(manifest.peer_dependencies_meta["sass"].optional);
     }
 
     #[test]
