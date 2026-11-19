@@ -6337,3 +6337,51 @@ snapshots:
         assert_eq!(pkg.dependencies["is-odd"], variant);
     }
 }
+
+#[test]
+fn edge_to_missing_tarball_peer_variant_falls_back_to_peer_free_package() {
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    let url = "https://codeload.github.com/o/peery/tar.gz/0123456789abcdef0123456789abcdef01234567";
+    let src = format!(
+        r#"lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      peery:
+        specifier: {url}
+        version: {url}
+      parent:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  parent@1.0.0:
+    resolution: {{integrity: sha512-xxx}}
+
+  peery@{url}:
+    resolution: {{gitHosted: true, tarball: {url}}}
+    version: 1.0.0
+
+snapshots:
+
+  parent@1.0.0:
+    dependencies:
+      peery: {url}(react@18.0.0)
+
+  peery@{url}: {{}}
+"#
+    );
+    std::fs::write(&lockfile_path, src).unwrap();
+    let graph = parse(&lockfile_path).unwrap();
+    let parent = graph
+        .packages
+        .values()
+        .find(|p| p.name == "parent")
+        .unwrap();
+    let key = crate::dep_edge_key("peery", &parent.dependencies["peery"]);
+    assert!(graph.packages.contains_key(&key), "{key} dangles");
+}

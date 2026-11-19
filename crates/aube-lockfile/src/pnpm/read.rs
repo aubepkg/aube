@@ -1101,6 +1101,28 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             })
             .collect();
         packages = rekeyed;
+        // An edge to a git/tarball child names its peer context. When the
+        // lockfile only holds the peer-free package, point the edge at that
+        // one, so every consumer of `dep_edge_key` lands on a real key.
+        let known: std::collections::HashSet<String> = packages.keys().cloned().collect();
+        for pkg in packages.values_mut() {
+            for (name, value) in pkg
+                .dependencies
+                .iter_mut()
+                .chain(pkg.optional_dependencies.iter_mut())
+            {
+                let Some(key) = crate::shared_local_dep_path(name, value) else {
+                    continue;
+                };
+                if !key.contains('(') || known.contains(&key) {
+                    continue;
+                }
+                let bare = value.split('(').next().unwrap_or(value);
+                if crate::shared_local_dep_path(name, bare).is_some_and(|k| known.contains(&k)) {
+                    *value = bare.to_string();
+                }
+            }
+        }
         for deps in importers.values_mut() {
             for dep in deps {
                 dep.dep_path = rewrite_peer_suffix(&dep.dep_path, &spec_peer_to_hashed);
