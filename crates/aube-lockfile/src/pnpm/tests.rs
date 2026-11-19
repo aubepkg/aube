@@ -6435,6 +6435,9 @@ importers:
       {leaf}:
         specifier: {url}
         version: {url}{sa}
+      parent:
+        specifier: 1.0.0
+        version: 1.0.0({leaf}@{url}{sa})
   b:
     dependencies:
       is-odd:
@@ -6445,13 +6448,19 @@ importers:
         version: {url}{sb}
 packages:
 {odd_packages}
+  parent@1.0.0:
+    resolution: {{integrity: sha512-parent}}
   {leaf}@{url}:
     resolution: {{gitHosted: true, tarball: {url}}}
     version: 1.0.0
     peerDependencies:
       is-odd: '*'
 snapshots:
-{odd_snapshots}{snapshots}"#,
+{odd_snapshots}{snapshots}
+  parent@1.0.0({leaf}@{url}{sa}):
+    dependencies:
+      {leaf}: {url}{sa}
+"#,
             va = ver(peer_a),
             vb = ver(peer_b),
             sa = suffix(peer_a),
@@ -6464,18 +6473,26 @@ snapshots:
         };
         let (a, b) = (dep_path(&graph, "a"), dep_path(&graph, "b"));
         proptest::prop_assert_eq!(a == b, peer_free || peer_a == peer_b);
-        for (importer, n) in [("a", peer_a), ("b", peer_b)] {
-            let key = dep_path(&graph, importer);
-            proptest::prop_assert!(key.ends_with(&suffix(n)));
-            let pkg = &graph.packages[&key];
-            // A peer-free package has one shared snapshot, written from the
-            // first importer's context.
-            let expected = if peer_free { peer_a } else { n };
-            proptest::prop_assert_eq!(&pkg.dependencies["is-odd"], &ver(expected));
-        }
+        let check = |g: &LockfileGraph| -> Result<(), proptest::test_runner::TestCaseError> {
+            for (importer, n) in [("a", peer_a), ("b", peer_b)] {
+                let key = dep_path(g, importer);
+                proptest::prop_assert!(key.ends_with(&suffix(n)));
+                let pkg = &g.packages[&key];
+                // A peer-free package has one shared snapshot, written from
+                // the first importer's context.
+                let expected = if peer_free { peer_a } else { n };
+                proptest::prop_assert_eq!(&pkg.dependencies["is-odd"], &ver(expected));
+            }
+            let parent = g.packages.values().find(|p| p.name == "parent").unwrap();
+            let edge = crate::dep_edge_key(&leaf, &parent.dependencies[leaf.as_str()]);
+            proptest::prop_assert_eq!(edge, dep_path(g, "a"));
+            Ok(())
+        };
+        check(&graph)?;
         write_with_project_root(&path, dir.path(), &graph, &PackageJson::default()).unwrap();
         let roundtrip = parse(&path).unwrap();
         proptest::prop_assert_eq!(dep_path(&roundtrip, "a"), a);
         proptest::prop_assert_eq!(dep_path(&roundtrip, "b"), b);
+        check(&roundtrip)?;
     }
 }
