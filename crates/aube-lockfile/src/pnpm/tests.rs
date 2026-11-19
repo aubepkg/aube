@@ -6385,3 +6385,97 @@ snapshots:
     let key = crate::dep_edge_key("peery", &parent.dependencies["peery"]);
     assert!(graph.packages.contains_key(&key), "{key} dangles");
 }
+
+proptest::proptest! {
+    #[test]
+    fn tarball_peer_contexts_round_trip_per_importer(
+        leaf in "[a-z]{1,10}",
+        peer_a in 1u8..9,
+        peer_b in 1u8..9,
+        peer_free in proptest::bool::ANY,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pnpm-lock.yaml");
+        let url = format!(
+            "https://codeload.github.com/o/{leaf}/tar.gz/0123456789abcdef0123456789abcdef01234567"
+        );
+        let ver = |n: u8| format!("{n}.0.0");
+        let suffix = |n: u8| if peer_free { String::new() } else { format!("(is-odd@{})", ver(n)) };
+        let mut snapshots = String::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for n in [peer_a, peer_b] {
+            if seen.insert(suffix(n)) {
+                snapshots.push_str(&format!(
+                    "\n  {leaf}@{url}{}:\n    dependencies:\n      is-odd: {}\n",
+                    suffix(n),
+                    ver(n)
+                ));
+            }
+        }
+        let odd_packages: String = [peer_a, peer_b]
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .iter()
+            .map(|n| format!("\n  is-odd@{}:\n    resolution: {{integrity: sha512-x{n}}}\n", ver(**n)))
+            .collect();
+        let odd_snapshots: String = [peer_a, peer_b]
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .iter()
+            .map(|n| format!("\n  is-odd@{}: {{}}\n", ver(**n)))
+            .collect();
+        let fixture = format!(
+            r#"lockfileVersion: '9.0'
+importers:
+  a:
+    dependencies:
+      is-odd:
+        specifier: {va}
+        version: {va}
+      {leaf}:
+        specifier: {url}
+        version: {url}{sa}
+  b:
+    dependencies:
+      is-odd:
+        specifier: {vb}
+        version: {vb}
+      {leaf}:
+        specifier: {url}
+        version: {url}{sb}
+packages:
+{odd_packages}
+  {leaf}@{url}:
+    resolution: {{gitHosted: true, tarball: {url}}}
+    version: 1.0.0
+    peerDependencies:
+      is-odd: '*'
+snapshots:
+{odd_snapshots}{snapshots}"#,
+            va = ver(peer_a),
+            vb = ver(peer_b),
+            sa = suffix(peer_a),
+            sb = suffix(peer_b),
+        );
+        std::fs::write(&path, fixture).unwrap();
+        let graph = parse(&path).unwrap();
+        let dep_path = |g: &LockfileGraph, importer: &str| {
+            g.importers[importer].iter().find(|d| d.name == leaf).unwrap().dep_path.clone()
+        };
+        let (a, b) = (dep_path(&graph, "a"), dep_path(&graph, "b"));
+        proptest::prop_assert_eq!(a == b, peer_free || peer_a == peer_b);
+        for (importer, n) in [("a", peer_a), ("b", peer_b)] {
+            let key = dep_path(&graph, importer);
+            proptest::prop_assert!(key.ends_with(&suffix(n)));
+            let pkg = &graph.packages[&key];
+            // A peer-free package has one shared snapshot, written from the
+            // first importer's context.
+            let expected = if peer_free { peer_a } else { n };
+            proptest::prop_assert_eq!(&pkg.dependencies["is-odd"], &ver(expected));
+        }
+        write_with_project_root(&path, dir.path(), &graph, &PackageJson::default()).unwrap();
+        let roundtrip = parse(&path).unwrap();
+        proptest::prop_assert_eq!(dep_path(&roundtrip, "a"), a);
+        proptest::prop_assert_eq!(dep_path(&roundtrip, "b"), b);
+    }
+}
