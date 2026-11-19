@@ -6435,7 +6435,7 @@ importers:
       {leaf}:
         specifier: {url}
         version: {url}{sa}
-      parent:
+      the-parent:
         specifier: 1.0.0
         version: 1.0.0({leaf}@{url}{sa})
   b:
@@ -6448,7 +6448,7 @@ importers:
         version: {url}{sb}
 packages:
 {odd_packages}
-  parent@1.0.0:
+  the-parent@1.0.0:
     resolution: {{integrity: sha512-parent}}
   {leaf}@{url}:
     resolution: {{gitHosted: true, tarball: {url}}}
@@ -6457,7 +6457,7 @@ packages:
       is-odd: '*'
 snapshots:
 {odd_snapshots}{snapshots}
-  parent@1.0.0({leaf}@{url}{sa}):
+  the-parent@1.0.0({leaf}@{url}{sa}):
     dependencies:
       {leaf}: {url}{sa}
 "#,
@@ -6483,7 +6483,7 @@ snapshots:
                 let expected = if peer_free { peer_a } else { n };
                 proptest::prop_assert_eq!(&pkg.dependencies["is-odd"], &ver(expected));
             }
-            let parent = g.packages.values().find(|p| p.name == "parent").unwrap();
+            let parent = g.packages.values().find(|p| p.name == "the-parent").unwrap();
             let edge = crate::dep_edge_key(&leaf, &parent.dependencies[leaf.as_str()]);
             proptest::prop_assert_eq!(edge, dep_path(g, "a"));
             Ok(())
