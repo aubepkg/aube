@@ -290,7 +290,16 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
                 }
                 other => other,
             };
-            let snapshot_key = format!("{name}@{}", local.specifier());
+            // Importers that resolve one URL with different peers are
+            // different packages, so git and remote-tarball deps keep the
+            // peer suffix on their dep_path and snapshot key.
+            let peer_suffix = match local {
+                LocalSource::Git(_) | LocalSource::RemoteTarball(_) => {
+                    info.version.find('(').map_or("", |i| &info.version[i..])
+                }
+                _ => "",
+            };
+            let snapshot_key = format!("{name}@{}{peer_suffix}", local.specifier());
             let should_rebase = importer_path != "."
                 && (info.specifier == classify_version || info.specifier.starts_with("workspace:"));
             // A member's `link:` version is relative to the member, as pnpm
@@ -320,7 +329,7 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
                 None if should_rebase => rebase_importer_local(local, importer_path),
                 None => local,
             };
-            let dep_path = local.dep_path(name);
+            let dep_path = format!("{}{peer_suffix}", local.dep_path(name));
             deps.push(DirectDep {
                 name: name.to_string(),
                 dep_path: dep_path.clone(),
@@ -658,7 +667,16 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
     let mut rekeyed: BTreeMap<String, LockedPackage> = BTreeMap::new();
     let mut local_rekeys: BTreeMap<String, String> = BTreeMap::new();
     for (old_key, mut pkg) in local_packages {
-        let new_key = pkg.local_source.as_ref().unwrap().dep_path(&pkg.name);
+        let peer_suffix = match pkg.local_source {
+            Some(LocalSource::Git(_) | LocalSource::RemoteTarball(_)) => {
+                old_key.find('(').map_or("", |i| &old_key[i..])
+            }
+            _ => "",
+        };
+        let new_key = format!(
+            "{}{peer_suffix}",
+            pkg.local_source.as_ref().unwrap().dep_path(&pkg.name)
+        );
         pkg.dep_path = new_key.clone();
         if old_key != new_key {
             local_rekeys.insert(old_key, new_key.clone());

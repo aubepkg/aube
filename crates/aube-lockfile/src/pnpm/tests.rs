@@ -6154,3 +6154,118 @@ proptest::proptest! {
         proptest::prop_assert!(written.contains(&expected), "expected {}, got:\n{}", link, written);
     }
 }
+
+#[test]
+fn tarball_dep_peer_variants_per_importer_round_trip() {
+    // Two importers install the same tarball URL and resolve its peer to
+    // different versions. Each importer's `version:` and each snapshot key
+    // carry the peer suffix, so a rewrite keeps both snapshots and a re-parse
+    // keeps the importers on different packages.
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    let url = "https://codeload.github.com/o/peery/tar.gz/0123456789abcdef0123456789abcdef01234567";
+    let src = format!(
+        r#"lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  a:
+    dependencies:
+      is-odd:
+        specifier: 3.0.1
+        version: 3.0.1
+      peery:
+        specifier: {url}
+        version: {url}(is-odd@3.0.1)
+
+  b:
+    dependencies:
+      is-odd:
+        specifier: 2.0.0
+        version: 2.0.0
+      peery:
+        specifier: {url}
+        version: {url}(is-odd@2.0.0)
+
+packages:
+
+  is-odd@2.0.0:
+    resolution: {{integrity: sha512-xxx}}
+
+  is-odd@3.0.1:
+    resolution: {{integrity: sha512-yyy}}
+
+  peery@{url}:
+    resolution: {{gitHosted: true, tarball: {url}}}
+    version: 1.0.0
+    peerDependencies:
+      is-odd: '*'
+
+snapshots:
+
+  is-odd@2.0.0: {{}}
+
+  is-odd@3.0.1: {{}}
+
+  peery@{url}(is-odd@2.0.0):
+    dependencies:
+      is-odd: 2.0.0
+
+  peery@{url}(is-odd@3.0.1):
+    dependencies:
+      is-odd: 3.0.1
+"#
+    );
+    std::fs::write(&lockfile_path, src).unwrap();
+    let graph = parse(&lockfile_path).unwrap();
+
+    let peery_dep_path = |importer: &str| {
+        graph.importers[importer]
+            .iter()
+            .find(|d| d.name == "peery")
+            .unwrap()
+            .dep_path
+            .clone()
+    };
+    assert_ne!(peery_dep_path("a"), peery_dep_path("b"));
+    assert!(peery_dep_path("a").ends_with("(is-odd@3.0.1)"));
+    assert!(peery_dep_path("b").ends_with("(is-odd@2.0.0)"));
+
+    let out_path = dir.path().join("round-trip.yaml");
+    write_with_project_root(
+        &out_path,
+        out_path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
+    let written = std::fs::read_to_string(&out_path).unwrap();
+    for variant in ["2.0.0", "3.0.1"] {
+        let key = format!(
+            "  peery@{url}(is-odd@{variant}):\n    dependencies:\n      is-odd: {variant}\n"
+        );
+        assert!(
+            written.contains(&key),
+            "missing snapshot {key}in: {written}"
+        );
+        let version = format!("version: {url}(is-odd@{variant})");
+        assert!(
+            written.contains(&version),
+            "missing {version} in: {written}"
+        );
+    }
+
+    let reparsed = parse(&out_path).unwrap();
+    assert_eq!(
+        reparsed.importers["a"]
+            .iter()
+            .find(|d| d.name == "peery")
+            .unwrap()
+            .dep_path,
+        peery_dep_path("a")
+    );
+}

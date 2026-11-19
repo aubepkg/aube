@@ -323,6 +323,15 @@ pub fn write_with_project_root(
             .or_else(|| pkg.and_then(patch_hash_for));
         Some(with_patch_hash(&translated, hash))
     };
+    // A local package that carries peers has one snapshot per peer context,
+    // keyed `<name>@<spec>(<peer>@<version>)` like a registry package. Without
+    // the suffix, importers that resolve different peer versions would share
+    // one key and the later snapshot would overwrite the earlier.
+    let peer_suffix = |dep_path: &str| -> String {
+        dep_path
+            .find('(')
+            .map_or_else(String::new, |i| dep_path[i..].to_string())
+    };
     let decorate_patch_hash = |value: &str, pkg: Option<&crate::LockedPackage>| -> String {
         let rewritten = rewrite_peer_suffix(value, &peer_reference_to_spec);
         pkg.map(|pkg| with_patch_hash(&rewritten, patch_hash_for(pkg)))
@@ -422,7 +431,7 @@ pub fn write_with_project_root(
                             relative_to_importer(path, importer_path, &project_root)
                         )
                     }
-                    _ => local.specifier(),
+                    _ => format!("{}{}", local.specifier(), peer_suffix(&dep.dep_path)),
                 }
             } else if !graph.packages.contains_key(&dep.dep_path)
                 && let Some(member) = workspace_links.get(&dep.dep_path)
@@ -882,7 +891,7 @@ pub fn write_with_project_root(
                 let rewritten = if let Some(target) = target
                     && let Some(ref local) = target.local_source
                 {
-                    local.specifier()
+                    format!("{}{}", local.specifier(), peer_suffix(&value))
                 } else if target.is_none()
                     && let Some(member) = workspace_links.get(&dp)
                 {
@@ -909,7 +918,12 @@ pub fn write_with_project_root(
         // parser lines them up with the packages entry above.
         let mut key = match pkg.local_source.as_ref() {
             Some(LocalSource::Link(_)) | Some(LocalSource::Exec(_)) => continue,
-            Some(local) => format!("{}@{}", pkg.name, local.specifier()),
+            Some(local) => format!(
+                "{}@{}{}",
+                pkg.name,
+                local.specifier(),
+                peer_suffix(dep_path)
+            ),
             None => {
                 if native_pnpm_aliases && let Some(real_name) = pkg.alias_of.as_deref() {
                     format!("{real_name}@{}", dep_path_tail(dep_path, &pkg.name))
