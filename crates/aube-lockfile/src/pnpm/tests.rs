@@ -6446,10 +6446,16 @@ importers:
       {leaf}:
         specifier: {url}
         version: {url}{sb}
+      the-parent-b:
+        specifier: 1.0.0
+        version: 1.0.0({leaf}@{url}{sb})
 packages:
 {odd_packages}
   the-parent@1.0.0:
     resolution: {{integrity: sha512-parent}}
+
+  the-parent-b@1.0.0:
+    resolution: {{integrity: sha512-parent-b}}
   {leaf}@{url}:
     resolution: {{gitHosted: true, tarball: {url}}}
     version: 1.0.0
@@ -6460,6 +6466,10 @@ snapshots:
   the-parent@1.0.0({leaf}@{url}{sa}):
     dependencies:
       {leaf}: {url}{sa}
+
+  the-parent-b@1.0.0({leaf}@{url}{sb}):
+    dependencies:
+      {leaf}: {url}{sb}
 "#,
             va = ver(peer_a),
             vb = ver(peer_b),
@@ -6483,9 +6493,11 @@ snapshots:
                 let expected = if peer_free { peer_a } else { n };
                 proptest::prop_assert_eq!(&pkg.dependencies["is-odd"], &ver(expected));
             }
-            let parent = g.packages.values().find(|p| p.name == "the-parent").unwrap();
-            let edge = crate::dep_edge_key(&leaf, &parent.dependencies[leaf.as_str()]);
-            proptest::prop_assert_eq!(edge, dep_path(g, "a"));
+            for (importer, parent_name) in [("a", "the-parent"), ("b", "the-parent-b")] {
+                let parent = g.packages.values().find(|p| p.name == parent_name).unwrap();
+                let edge = crate::dep_edge_key(&leaf, &parent.dependencies[leaf.as_str()]);
+                proptest::prop_assert_eq!(edge, dep_path(g, importer));
+            }
             Ok(())
         };
         check(&graph)?;
