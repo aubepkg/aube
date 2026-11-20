@@ -6154,3 +6154,357 @@ proptest::proptest! {
         proptest::prop_assert!(written.contains(&expected), "expected {}, got:\n{}", link, written);
     }
 }
+
+#[test]
+fn tarball_dep_peer_variants_per_importer_round_trip() {
+    // Two importers install the same tarball URL and resolve its peer to
+    // different versions. Each importer's `version:` and each snapshot key
+    // carry the peer suffix, so a rewrite keeps both snapshots and a re-parse
+    // keeps the importers on different packages.
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    let url = "https://codeload.github.com/o/peery/tar.gz/0123456789abcdef0123456789abcdef01234567";
+    let src = format!(
+        r#"lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  a:
+    dependencies:
+      is-odd:
+        specifier: 3.0.1
+        version: 3.0.1
+      peery:
+        specifier: {url}
+        version: {url}(is-odd@3.0.1)
+
+  b:
+    dependencies:
+      is-odd:
+        specifier: 2.0.0
+        version: 2.0.0
+      peery:
+        specifier: {url}
+        version: {url}(is-odd@2.0.0)
+
+packages:
+
+  is-odd@2.0.0:
+    resolution: {{integrity: sha512-xxx}}
+
+  is-odd@3.0.1:
+    resolution: {{integrity: sha512-yyy}}
+
+  peery@{url}:
+    resolution: {{gitHosted: true, tarball: {url}}}
+    version: 1.0.0
+    peerDependencies:
+      is-odd: '*'
+
+snapshots:
+
+  is-odd@2.0.0: {{}}
+
+  is-odd@3.0.1: {{}}
+
+  peery@{url}(is-odd@2.0.0):
+    dependencies:
+      is-odd: 2.0.0
+
+  peery@{url}(is-odd@3.0.1):
+    dependencies:
+      is-odd: 3.0.1
+"#
+    );
+    std::fs::write(&lockfile_path, src).unwrap();
+    let graph = parse(&lockfile_path).unwrap();
+
+    let peery_dep_path = |importer: &str| {
+        graph.importers[importer]
+            .iter()
+            .find(|d| d.name == "peery")
+            .unwrap()
+            .dep_path
+            .clone()
+    };
+    assert_ne!(peery_dep_path("a"), peery_dep_path("b"));
+    assert!(peery_dep_path("a").ends_with("(is-odd@3.0.1)"));
+    assert!(peery_dep_path("b").ends_with("(is-odd@2.0.0)"));
+
+    let out_path = dir.path().join("round-trip.yaml");
+    write_with_project_root(
+        &out_path,
+        out_path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
+    let written = std::fs::read_to_string(&out_path).unwrap();
+    for variant in ["2.0.0", "3.0.1"] {
+        let key = format!(
+            "  peery@{url}(is-odd@{variant}):\n    dependencies:\n      is-odd: {variant}\n"
+        );
+        assert!(
+            written.contains(&key),
+            "missing snapshot {key}in: {written}"
+        );
+        let version = format!("version: {url}(is-odd@{variant})");
+        assert!(
+            written.contains(&version),
+            "missing {version} in: {written}"
+        );
+    }
+
+    let reparsed = parse(&out_path).unwrap();
+    assert_eq!(
+        reparsed.importers["a"]
+            .iter()
+            .find(|d| d.name == "peery")
+            .unwrap()
+            .dep_path,
+        peery_dep_path("a")
+    );
+}
+
+#[test]
+fn transitive_tarball_peer_variant_keeps_its_own_package() {
+    // The importer installs `peery` with `is-odd@3.0.1`, while a registry
+    // package pulls the same URL in with `is-odd@2.0.0`. The second context
+    // has no importer entry and must still get its own package.
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    let url = "https://codeload.github.com/o/peery/tar.gz/0123456789abcdef0123456789abcdef01234567";
+    let src = format!(
+        r#"lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      is-odd:
+        specifier: 3.0.1
+        version: 3.0.1
+      peery:
+        specifier: {url}
+        version: {url}(is-odd@3.0.1)
+
+packages:
+
+  is-odd@2.0.0:
+    resolution: {{integrity: sha512-xxx}}
+
+  is-odd@3.0.1:
+    resolution: {{integrity: sha512-yyy}}
+
+  peery@{url}:
+    resolution: {{gitHosted: true, tarball: {url}}}
+    version: 1.0.0
+    peerDependencies:
+      is-odd: '*'
+
+snapshots:
+
+  is-odd@2.0.0: {{}}
+
+  is-odd@3.0.1: {{}}
+
+  peery@{url}(is-odd@2.0.0):
+    dependencies:
+      is-odd: 2.0.0
+
+  peery@{url}(is-odd@3.0.1):
+    dependencies:
+      is-odd: 3.0.1
+"#
+    );
+    std::fs::write(&lockfile_path, src).unwrap();
+    let graph = parse(&lockfile_path).unwrap();
+    let variants: Vec<_> = graph
+        .packages
+        .values()
+        .filter(|p| p.name == "peery")
+        .collect();
+    assert_eq!(variants.len(), 2, "{:?}", graph.packages.keys());
+    for variant in ["2.0.0", "3.0.1"] {
+        let pkg = variants
+            .iter()
+            .find(|p| p.dep_path.ends_with(&format!("(is-odd@{variant})")))
+            .unwrap_or_else(|| panic!("no peery variant for is-odd@{variant}"));
+        assert_eq!(pkg.dependencies["is-odd"], variant);
+    }
+}
+
+#[test]
+fn edge_to_missing_tarball_peer_variant_falls_back_to_peer_free_package() {
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    let url = "https://codeload.github.com/o/peery/tar.gz/0123456789abcdef0123456789abcdef01234567";
+    let src = format!(
+        r#"lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      peery:
+        specifier: {url}
+        version: {url}
+      parent:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  parent@1.0.0:
+    resolution: {{integrity: sha512-xxx}}
+
+  peery@{url}:
+    resolution: {{gitHosted: true, tarball: {url}}}
+    version: 1.0.0
+
+snapshots:
+
+  parent@1.0.0:
+    dependencies:
+      peery: {url}(react@18.0.0)
+
+  peery@{url}: {{}}
+"#
+    );
+    std::fs::write(&lockfile_path, src).unwrap();
+    let graph = parse(&lockfile_path).unwrap();
+    let parent = graph
+        .packages
+        .values()
+        .find(|p| p.name == "parent")
+        .unwrap();
+    let key = crate::dep_edge_key("peery", &parent.dependencies["peery"]);
+    assert!(graph.packages.contains_key(&key), "{key} dangles");
+}
+
+proptest::proptest! {
+    #[test]
+    fn tarball_peer_contexts_round_trip_per_importer(
+        leaf in "[a-z]{1,10}",
+        peer_a in 1u8..9,
+        peer_b in 1u8..9,
+        peer_free in proptest::bool::ANY,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pnpm-lock.yaml");
+        let url = format!(
+            "https://codeload.github.com/o/{leaf}/tar.gz/0123456789abcdef0123456789abcdef01234567"
+        );
+        let ver = |n: u8| format!("{n}.0.0");
+        let suffix = |n: u8| if peer_free { String::new() } else { format!("(is-odd@{})", ver(n)) };
+        let mut snapshots = String::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for n in [peer_a, peer_b] {
+            if seen.insert(suffix(n)) {
+                snapshots.push_str(&format!(
+                    "\n  {leaf}@{url}{}:\n    dependencies:\n      is-odd: {}\n",
+                    suffix(n),
+                    ver(n)
+                ));
+            }
+        }
+        let odd_packages: String = [peer_a, peer_b]
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .iter()
+            .map(|n| format!("\n  is-odd@{}:\n    resolution: {{integrity: sha512-x{n}}}\n", ver(**n)))
+            .collect();
+        let odd_snapshots: String = [peer_a, peer_b]
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .iter()
+            .map(|n| format!("\n  is-odd@{}: {{}}\n", ver(**n)))
+            .collect();
+        let fixture = format!(
+            r#"lockfileVersion: '9.0'
+importers:
+  a:
+    dependencies:
+      is-odd:
+        specifier: {va}
+        version: {va}
+      {leaf}:
+        specifier: {url}
+        version: {url}{sa}
+      the-parent:
+        specifier: 1.0.0
+        version: 1.0.0({leaf}@{url}{sa})
+  b:
+    dependencies:
+      is-odd:
+        specifier: {vb}
+        version: {vb}
+      {leaf}:
+        specifier: {url}
+        version: {url}{sb}
+      the-parent-b:
+        specifier: 1.0.0
+        version: 1.0.0({leaf}@{url}{sb})
+packages:
+{odd_packages}
+  the-parent@1.0.0:
+    resolution: {{integrity: sha512-parent}}
+
+  the-parent-b@1.0.0:
+    resolution: {{integrity: sha512-parent-b}}
+  {leaf}@{url}:
+    resolution: {{gitHosted: true, tarball: {url}}}
+    version: 1.0.0
+    peerDependencies:
+      is-odd: '*'
+snapshots:
+{odd_snapshots}{snapshots}
+  the-parent@1.0.0({leaf}@{url}{sa}):
+    dependencies:
+      {leaf}: {url}{sa}
+
+  the-parent-b@1.0.0({leaf}@{url}{sb}):
+    dependencies:
+      {leaf}: {url}{sb}
+"#,
+            va = ver(peer_a),
+            vb = ver(peer_b),
+            sa = suffix(peer_a),
+            sb = suffix(peer_b),
+        );
+        std::fs::write(&path, fixture).unwrap();
+        let graph = parse(&path).unwrap();
+        let dep_path = |g: &LockfileGraph, importer: &str| {
+            g.importers[importer].iter().find(|d| d.name == leaf).unwrap().dep_path.clone()
+        };
+        let (a, b) = (dep_path(&graph, "a"), dep_path(&graph, "b"));
+        proptest::prop_assert_eq!(a == b, peer_free || peer_a == peer_b);
+        let check = |g: &LockfileGraph| -> Result<(), proptest::test_runner::TestCaseError> {
+            for (importer, n) in [("a", peer_a), ("b", peer_b)] {
+                let key = dep_path(g, importer);
+                proptest::prop_assert!(key.ends_with(&suffix(n)));
+                let pkg = &g.packages[&key];
+                // A peer-free package has one shared snapshot, written from
+                // the first importer's context.
+                let expected = if peer_free { peer_a } else { n };
+                proptest::prop_assert_eq!(&pkg.dependencies["is-odd"], &ver(expected));
+            }
+            for (importer, parent_name) in [("a", "the-parent"), ("b", "the-parent-b")] {
+                let parent = g.packages.values().find(|p| p.name == parent_name).unwrap();
+                let edge = crate::dep_edge_key(&leaf, &parent.dependencies[leaf.as_str()]);
+                proptest::prop_assert_eq!(edge, dep_path(g, importer));
+            }
+            Ok(())
+        };
+        check(&graph)?;
+        write_with_project_root(&path, dir.path(), &graph, &PackageJson::default()).unwrap();
+        let roundtrip = parse(&path).unwrap();
+        proptest::prop_assert_eq!(dep_path(&roundtrip, "a"), a);
+        proptest::prop_assert_eq!(dep_path(&roundtrip, "b"), b);
+        check(&roundtrip)?;
+    }
+}

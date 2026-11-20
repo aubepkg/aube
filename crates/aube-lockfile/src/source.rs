@@ -338,7 +338,8 @@ pub fn shared_local_dep_path(dep_name: &str, dep_value: &str) -> Option<String> 
     // first-`(` truncation is ever wrong for a real spec, fix it in
     // `push_direct` and here together — never in isolation.
     let classify = dep_value.split('(').next().unwrap_or(dep_value);
-    match LocalSource::parse(classify, Path::new("")) {
+    let peers = dep_value.find('(').map_or("", |i| &dep_value[i..]);
+    let head = match LocalSource::parse(classify, Path::new("")) {
         Some(LocalSource::Git(mut git)) => {
             // Snapshot specs carry the pinned commit after `#`, which
             // `parse` records as `committish` rather than `resolved`. The
@@ -348,11 +349,14 @@ pub fn shared_local_dep_path(dep_name: &str, dep_value: &str) -> Option<String> 
             if git.resolved.is_empty() {
                 git.resolved = git.committish.take()?;
             }
-            Some(LocalSource::Git(git).dep_path(dep_name))
+            LocalSource::Git(git).dep_path(dep_name)
         }
-        Some(tarball @ LocalSource::RemoteTarball(_)) => Some(tarball.dep_path(dep_name)),
-        _ => None,
-    }
+        Some(tarball @ LocalSource::RemoteTarball(_)) => tarball.dep_path(dep_name),
+        _ => return None,
+    };
+    // A peer-contextualized child is keyed with its suffix, so the edge
+    // must land on that variant rather than a peer-free sibling.
+    Some(format!("{head}{peers}"))
 }
 
 /// Resolve a dependency edge `(name, tail)` to the graph key of the child
@@ -394,7 +398,12 @@ pub fn resolve_dep_edge(name: &str, tail: &str, contains: impl Fn(&str) -> bool)
             return Some(key);
         }
     }
-    shared_local_dep_path(name, tail).filter(|key| contains(key))
+    let key = shared_local_dep_path(name, tail)?;
+    if contains(&key) {
+        return Some(key);
+    }
+    let peerless = key.split('(').next().unwrap_or(&key);
+    contains(peerless).then(|| peerless.to_string())
 }
 
 /// The path-hashed key a `file:` child is stored under, for a `file:` spec
@@ -1258,13 +1267,28 @@ mod tests {
     }
 
     #[test]
-    fn shared_strips_peer_suffix_before_classifying() {
+    fn shared_classifies_without_peer_suffix_and_keeps_it_on_the_key() {
         let url = format!("https://codeload.github.com/request/request/tar.gz/{SHARED_SHA}");
         let with_peer = format!("{url}(typescript@5.8.3)");
         assert_eq!(
             shared_local_dep_path("request", &with_peer),
-            shared_local_dep_path("request", &url),
+            Some(format!(
+                "{}(typescript@5.8.3)",
+                shared_local_dep_path("request", &url).unwrap()
+            )),
         );
+    }
+
+    #[test]
+    fn dep_edge_targets_the_peer_variant_of_a_url_child() {
+        let url = format!("https://codeload.github.com/request/request/tar.gz/{SHARED_SHA}");
+        let bare = shared_local_dep_path("request", &url).unwrap();
+        let variant = format!("{bare}(react@18.0.0)");
+        let edge = format!("{url}(react@18.0.0)");
+        let only_variant = resolve_dep_edge("request", &edge, |k| k == variant);
+        assert_eq!(only_variant.as_deref(), Some(variant.as_str()));
+        let only_bare = resolve_dep_edge("request", &edge, |k| k == bare);
+        assert_eq!(only_bare.as_deref(), Some(bare.as_str()));
     }
 
     #[test]
