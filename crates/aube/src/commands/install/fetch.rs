@@ -331,13 +331,9 @@ pub(super) async fn import_local_source(
             // packing them.
             if t.git_hosted
                 && !ignore_scripts
-                && let Some(sha) = t
-                    .url
-                    .rsplit('/')
-                    .next()
-                    .filter(|s| s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit()))
+                && let Some(sha) = git_hosted_tarball_commit(&t.url)
             {
-                let (url, sha, integrity) = (t.url.clone(), sha.to_string(), t.integrity.clone());
+                let (url, sha, integrity) = (t.url.clone(), sha, t.integrity.clone());
                 let bytes_for_extract = bytes.clone();
                 let (checkout, _) = tokio::task::spawn_blocking(move || {
                     aube_store::extract_codeload_tarball(
@@ -349,7 +345,13 @@ pub(super) async fn import_local_source(
                 })
                 .await
                 .map_err(|e| miette!("codeload extract task panicked: {e}{chain}"))?
-                .map_err(|e| miette!("failed to extract {}: {e}{chain}", local.specifier()))?;
+                .map_err(|e| {
+                    miette!(
+                        code = aube_codes::errors::ERR_AUBE_TARBALL_EXTRACT,
+                        "failed to extract {}: {e}{chain}",
+                        local.specifier()
+                    )
+                })?;
                 if let Some(index) = prepare_git_checkout(
                     store,
                     &checkout,
@@ -418,7 +420,12 @@ async fn prepare_git_checkout(
     // silently pull those build artifacts into the store. Copying also
     // isolates concurrent installs of the same dep. `ScratchDir`
     // removes the copy on drop, including on the error path.
-    let scratch = prepare_scratch_copy(pkg_root, spec)?;
+    let scratch = {
+        let (root, spec) = (pkg_root.to_path_buf(), spec.to_string());
+        tokio::task::spawn_blocking(move || prepare_scratch_copy(&root, &spec))
+            .await
+            .map_err(|e| miette!("prepare scratch copy task panicked: {e}{chain}"))??
+    };
     run_git_dep_prepare(
         scratch.path(),
         spec,
@@ -427,12 +434,37 @@ async fn prepare_git_checkout(
         inherited_build_policy,
     )
     .await?;
-    let archive = crate::commands::pack::build_archive(scratch.path())
-        .wrap_err_with(|| format!("failed to pack prepared git dep {spec}{chain}"))?;
-    let index = store
-        .import_tarball(&archive.tarball)
-        .map_err(|e| miette!("failed to import prepared {spec}: {e}{chain}"))?;
+    let index = {
+        let (root, store, spec_owned, chain_owned) = (
+            scratch.path().to_path_buf(),
+            std::sync::Arc::clone(store),
+            spec.to_string(),
+            chain.to_string(),
+        );
+        tokio::task::spawn_blocking(move || -> miette::Result<aube_store::PackageIndex> {
+            let archive = crate::commands::pack::build_archive(&root).wrap_err_with(|| {
+                format!("failed to pack prepared git dep {spec_owned}{chain_owned}")
+            })?;
+            store
+                .import_tarball(&archive.tarball)
+                .map_err(|e| miette!("failed to import prepared {spec_owned}: {e}{chain_owned}"))
+        })
+        .await
+        .map_err(|e| miette!("pack and import task panicked: {e}{chain}"))??
+    };
     Ok(Some(index))
+}
+
+/// The commit a git-hosted tarball URL pins: the whole last segment for
+/// GitHub (`.../tar.gz/<sha>`), `<sha>.tar.gz` for Bitbucket, and
+/// `<repo>-<sha>.tar.gz` for GitLab.
+fn git_hosted_tarball_commit(url: &str) -> Option<String> {
+    let segment = url.rsplit('/').next()?;
+    let segment = segment.strip_suffix(".tar.gz").unwrap_or(segment);
+    let start = segment.len().checked_sub(40)?;
+    let sha = segment.get(start..)?;
+    let boundary = start == 0 || segment[..start].ends_with('-');
+    (boundary && sha.chars().all(|c| c.is_ascii_hexdigit())).then(|| sha.to_string())
 }
 
 /// Fetch tarballs for resolved packages, checking the index cache first.
@@ -1249,7 +1281,31 @@ pub(super) fn version_from_dep_path(dep_path: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::lockfile_tarball_url_matches_metadata;
+    #[test]
+    fn git_hosted_tarball_commit_reads_each_provider_url() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        for url in [
+            format!("https://codeload.github.com/o/r/tar.gz/{sha}"),
+            format!("https://gitlab.com/o/r/-/archive/{sha}/r-{sha}.tar.gz"),
+            format!("https://bitbucket.org/o/r/get/{sha}.tar.gz"),
+        ] {
+            assert_eq!(
+                git_hosted_tarball_commit(&url).as_deref(),
+                Some(sha),
+                "{url}"
+            );
+        }
+        assert_eq!(
+            git_hosted_tarball_commit("https://x.test/pkg-1.0.0.tgz"),
+            None
+        );
+        assert_eq!(
+            git_hosted_tarball_commit("https://x.test/r/tar.gz/abc123"),
+            None
+        );
+    }
+
+    use super::{git_hosted_tarball_commit, lockfile_tarball_url_matches_metadata};
 
     #[test]
     fn tarball_url_match_accepts_exact_url() {
