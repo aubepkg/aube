@@ -459,7 +459,8 @@ async fn prepare_git_checkout(
 /// GitHub (`.../tar.gz/<sha>`), `<sha>.tar.gz` for Bitbucket, and
 /// `<repo>-<sha>.tar.gz` for GitLab.
 fn git_hosted_tarball_commit(url: &str) -> Option<String> {
-    let segment = url.rsplit('/').next()?;
+    let path = url.split(['?', '#']).next()?;
+    let segment = path.rsplit('/').next()?;
     let segment = segment.strip_suffix(".tar.gz").unwrap_or(segment);
     let start = segment.len().checked_sub(40)?;
     let sha = segment.get(start..)?;
@@ -1288,6 +1289,8 @@ mod tests {
             format!("https://codeload.github.com/o/r/tar.gz/{sha}"),
             format!("https://gitlab.com/o/r/-/archive/{sha}/r-{sha}.tar.gz"),
             format!("https://bitbucket.org/o/r/get/{sha}.tar.gz"),
+            format!("https://codeload.github.com/o/r/tar.gz/{sha}?download=1"),
+            format!("https://bitbucket.org/o/r/get/{sha}.tar.gz#frag"),
         ] {
             assert_eq!(
                 git_hosted_tarball_commit(&url).as_deref(),
