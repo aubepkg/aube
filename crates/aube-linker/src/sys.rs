@@ -541,7 +541,7 @@ fn relative_bin_target(base_dir: &Path, target: &Path) -> String {
 ///
 /// `path_sep` is `/` on POSIX/PowerShell/Git-Bash and `\` for cmd.exe;
 /// `list_sep` is `:` on POSIX, `;` on cmd.exe. Each entry is prefixed
-/// with `$basedir/` (or `%~dp0` for cmd via the caller's prefix —
+/// with `$basedir/` (or `%dp0%` for cmd via the caller's prefix —
 /// cmd's `%~dp0` already ends with a backslash so no extra path-sep is
 /// emitted between prefix and entry).
 fn shim_node_path(
@@ -552,8 +552,8 @@ fn shim_node_path(
     list_sep: &str,
 ) -> String {
     let (basedir_prefix, basedir_suffix) = if path_sep == "\\" {
-        // cmd: `%~dp0` already ends in a backslash, so don't emit one.
-        ("%~dp0", "")
+        // cmd: `%dp0%` already ends in a backslash, so don't emit one.
+        ("%dp0%", "")
     } else {
         ("$basedir", "/")
     };
@@ -733,9 +733,11 @@ fn generate_cmd_shim(
         let node_path =
             node_path_value.map_or(String::new(), |val| format!("@SET NODE_PATH={val}\r\n"));
         return format!(
-            "@SETLOCAL\r\n\
+            "{CMD_SHIM_PROLOGUE}\
+             @SETLOCAL\r\n\
+             @CALL :find_dp0\r\n\
              {node_path}\
-             @\"%~dp0\\{rel_target_backslash}\" %*\r\n"
+             @\"%dp0%\\{rel_target_backslash}\" %*\r\n"
         );
     }
     let BinLaunch::Interpreter(prog) = launch else {
@@ -745,13 +747,15 @@ fn generate_cmd_shim(
     let node_path =
         node_path_value.map_or(String::new(), |val| format!("@SET NODE_PATH={val}\r\n"));
     format!(
-        "@SETLOCAL\r\n\
+        "{CMD_SHIM_PROLOGUE}\
+         @SETLOCAL\r\n\
+         @CALL :find_dp0\r\n\
          {node_path}\
-         @IF EXIST \"%~dp0\\{prog}.exe\" (\r\n\
-         \x20 \"%~dp0\\{prog}.exe\" \"%~dp0\\{rel_target_backslash}\" %*\r\n\
+         @IF EXIST \"%dp0%\\{prog}.exe\" (\r\n\
+         \x20 \"%dp0%\\{prog}.exe\" \"%dp0%\\{rel_target_backslash}\" %*\r\n\
          ) ELSE (\r\n\
          \x20 @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n\
-         \x20 {prog} \"%~dp0\\{rel_target_backslash}\" %*\r\n\
+         \x20 {prog} \"%dp0%\\{rel_target_backslash}\" %*\r\n\
          )\r\n"
     )
 }
@@ -1036,7 +1040,7 @@ fn create_bound_node_shim(
                 format!("$env:NODE_PATH=\"{value}\"\n")
             });
         let cmd = format!(
-            "@SETLOCAL DisableDelayedExpansion\r\n@REM {NODE_SHIM_MARKER}{metadata}\r\n{cmd_node_path}@{}{cmd_args} \"%~dp0\\{}\" %*\r\n",
+            "{CMD_SHIM_PROLOGUE}@SETLOCAL DisableDelayedExpansion\r\n@CALL :find_dp0\r\n@REM {NODE_SHIM_MARKER}{metadata}\r\n{cmd_node_path}@{}{cmd_args} \"%dp0%\\{}\" %*\r\n",
             cmd_quote(node_text),
             rel.replace('/', "\\").replace('%', "%%")
         );
@@ -1180,6 +1184,8 @@ pub fn resolve_bin_shim_with_node(path: &Path) -> io::Result<Option<ResolvedBinS
     let Some(parent) = path.parent() else {
         return Ok(None);
     };
+    let normalized = normalize_cmd_shim(content);
+    let content = normalized.as_ref();
 
     let parsed = if let Some(target) = parse_posix_shim_target(content) {
         Some((
@@ -1267,7 +1273,33 @@ fn direct_cmd_shim_target(path: &Path) -> io::Result<Option<String>> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Ok(None);
     };
-    Ok(parse_direct_cmd_shim_target(&content).map(|target| target.replace('\\', "/")))
+    Ok(parse_direct_cmd_shim_target(&normalize_cmd_shim(&content))
+        .map(|target| target.replace('\\', "/")))
+}
+
+/// Header of every generated `.cmd` shim. cmd.exe sets `%~dp0` to the
+/// current folder, not the batch file's folder, when the file is started by
+/// a quoted name found through PATH (`cmd /c ""npm" -v"`). It is correct
+/// inside a `CALL`ed subroutine, so the shim captures it there into `dp0`
+/// (the same pattern npm's `cmd-shim` uses).
+const CMD_SHIM_PROLOGUE: &str =
+    "@GOTO start\r\n:find_dp0\r\n@SET dp0=%~dp0\r\n@EXIT /b\r\n:start\r\n";
+
+/// Rewrite a current-format `.cmd` shim into the legacy shape (`%~dp0`, no
+/// prologue) so a single set of parsers decodes both generations. Content
+/// that is not a current-format shim is returned unchanged.
+fn normalize_cmd_shim(content: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    let Some(rest) = content.strip_prefix(CMD_SHIM_PROLOGUE) else {
+        return Cow::Borrowed(content);
+    };
+    let Some((setlocal, rest)) = rest.split_once("\r\n") else {
+        return Cow::Borrowed(content);
+    };
+    let Some(rest) = rest.strip_prefix("@CALL :find_dp0\r\n") else {
+        return Cow::Borrowed(content);
+    };
+    Cow::Owned(format!("{setlocal}\r\n{rest}").replace("%dp0%", "%~dp0"))
 }
 
 fn parse_direct_cmd_shim_target(content: &str) -> Option<&str> {
@@ -2714,7 +2746,7 @@ process.exit(17);
         .unwrap();
 
         let cmd = std::fs::read_to_string(bin_dir.join("mycli.cmd")).unwrap();
-        assert!(cmd.contains("@SET NODE_PATH=%~dp0.."));
+        assert!(cmd.contains("@SET NODE_PATH=%dp0%.."));
         let ps1 = std::fs::read_to_string(bin_dir.join("mycli.ps1")).unwrap();
         assert!(ps1.contains("$env:NODE_PATH=\"$basedir/..\""));
         let sh = std::fs::read_to_string(bin_dir.join("mycli")).unwrap();
@@ -2753,7 +2785,7 @@ process.exit(17);
 
         let cmd = std::fs::read_to_string(bin_dir.join("mycli.cmd")).unwrap();
         assert!(
-            cmd.contains("@SET NODE_PATH=%~dp0..;%~dp0..\\.aube\\node_modules"),
+            cmd.contains("@SET NODE_PATH=%dp0%..;%dp0%..\\.aube\\node_modules"),
             "cmd shim should join with `;` and use backslashes:\n{cmd}"
         );
         let ps1 = std::fs::read_to_string(bin_dir.join("mycli.ps1")).unwrap();
@@ -2974,6 +3006,30 @@ process.exit(17);
     // ---------------------------------------------------------------
 
     #[test]
+    fn current_format_cmd_shims_decode_like_legacy_ones() {
+        let direct = format!(
+            "{CMD_SHIM_PROLOGUE}@SETLOCAL\r\n@CALL :find_dp0\r\n@SET NODE_PATH=%dp0%..\r\n@\"%dp0%\\..\\pkg\\tool.exe\" %*\r\n"
+        );
+        assert_eq!(
+            normalize_cmd_shim(&direct),
+            "@SETLOCAL\r\n@SET NODE_PATH=%~dp0..\r\n@\"%~dp0\\..\\pkg\\tool.exe\" %*\r\n"
+        );
+        assert_eq!(
+            parse_direct_cmd_shim_target(&normalize_cmd_shim(&direct)),
+            Some("..\\pkg\\tool.exe")
+        );
+        let interp = format!(
+            "{CMD_SHIM_PROLOGUE}@SETLOCAL\r\n@CALL :find_dp0\r\n@IF EXIST \"%dp0%\\node.exe\" (\r\n  \"%dp0%\\node.exe\" \"%dp0%\\..\\p\\t.js\" %*\r\n) ELSE (\r\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n  node \"%dp0%\\..\\p\\t.js\" %*\r\n)\r\n"
+        );
+        assert_eq!(
+            parse_cmd_shim_target(&normalize_cmd_shim(&interp)),
+            Some("..\\p\\t.js")
+        );
+        let legacy = "@SETLOCAL\r\n@\"%~dp0\\t.exe\" %*\r\n";
+        assert_eq!(normalize_cmd_shim(legacy), legacy);
+    }
+
+    #[test]
     fn safe_prog_passes_through_valid() {
         assert_eq!(safe_prog("node"), "node");
         assert_eq!(safe_prog("python3.11"), "python3.11");
@@ -3015,7 +3071,7 @@ process.exit(17);
     #[test]
     fn windows_direct_shims_execute_the_target_without_node() {
         let cmd = generate_cmd_shim(&BinLaunch::Direct, "..\\pkg\\native.exe", None);
-        assert!(cmd.contains("@\"%~dp0\\..\\pkg\\native.exe\" %*"));
+        assert!(cmd.contains("@\"%dp0%\\..\\pkg\\native.exe\" %*"));
         assert!(!cmd.contains("node"));
 
         let ps1 = generate_ps1_shim(&BinLaunch::Direct, "../pkg/native.exe", None);
