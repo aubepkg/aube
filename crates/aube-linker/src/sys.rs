@@ -1283,7 +1283,7 @@ fn direct_cmd_shim_target(path: &Path) -> io::Result<Option<String>> {
 /// inside a `CALL`ed subroutine, so the shim captures it there into `dp0`
 /// (the same pattern npm's `cmd-shim` uses).
 const CMD_SHIM_PROLOGUE: &str =
-    "@GOTO start\r\n:find_dp0\r\n@SET dp0=%~dp0\r\n@EXIT /b\r\n:start\r\n";
+    "@GOTO start\r\n:find_dp0\r\n@SET \"dp0=%~dp0\"\r\n@EXIT /b\r\n:start\r\n";
 
 /// Rewrite a current-format `.cmd` shim into the legacy shape (`%~dp0`, no
 /// prologue) so a single set of parsers decodes both generations. Content
@@ -3065,6 +3065,37 @@ process.exit(17);
         );
         // Substituted with the safe default.
         assert!(shim.contains("node.exe"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_cmd_shim_runs_when_started_by_quoted_name_from_another_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("a&b").join("bin");
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(bin.join("..\\target.cmd"), "@echo shim-target-ran %*\r\n").unwrap();
+        std::fs::write(
+            bin.join("demo.cmd"),
+            generate_cmd_shim(&BinLaunch::Direct, "..\\target.cmd", None),
+        )
+        .unwrap();
+        let path = std::env::join_paths(std::iter::once(bin.clone()).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )))
+        .unwrap();
+        let output = std::process::Command::new("cmd.exe")
+            .args(["/d", "/s", "/c", "\"\"demo\" arg\""])
+            .current_dir(&elsewhere)
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "shim-target-ran arg"
+        );
     }
 
     #[cfg(windows)]
