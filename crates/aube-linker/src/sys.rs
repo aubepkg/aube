@@ -3085,8 +3085,10 @@ process.exit(17);
             &std::env::var_os("PATH").unwrap_or_default(),
         )))
         .unwrap();
+        use std::os::windows::process::CommandExt;
         let output = std::process::Command::new("cmd.exe")
-            .args(["/d", "/s", "/c", "\"\"demo\" arg\""])
+            .args(["/d", "/s", "/c"])
+            .raw_arg("\"\"demo\" arg\"")
             .current_dir(&elsewhere)
             .env("PATH", path)
             .output()
