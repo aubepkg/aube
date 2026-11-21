@@ -541,24 +541,25 @@ pub fn unlink_bins(install_dir: &Path, bin_dir: &Path, bin_names: &[String]) {
             let Ok(content) = std::fs::read_to_string(&cmd_path) else {
                 continue;
             };
-            // The .cmd shim embeds the target as `"%~dp0\<rel_path>"`.
+            // The .cmd shim embeds the target as `"%dp0%\<rel_path>"`
+            // (`"%~dp0\<rel_path>"` in shims from older versions).
             // Extract the relative path from the ELSE branch (the one
             // without `.exe`), which looks like:
-            //   prog "%~dp0\<rel_target>" %*
+            //   prog "%dp0%\<rel_target>" %*
             let owned = content
                 .lines()
                 .filter_map(|line| {
                     let line = line.trim();
-                    // Match the fallback line: `prog "%~dp0\<path>" %*`
                     // Skip lines containing `.exe"` (those are the IF branch).
-                    if line.contains("%~dp0\\") && !line.contains(".exe\"") {
-                        let start = line.find("%~dp0\\")?;
-                        let after = &line[start + 6..]; // skip `%~dp0\`
+                    if line.contains(".exe\"") {
+                        return None;
+                    }
+                    ["%dp0%\\", "%~dp0\\"].into_iter().find_map(|marker| {
+                        let start = line.find(marker)? + marker.len();
+                        let after = &line[start..];
                         let end = after.find('"')?;
                         Some(after[..end].to_string())
-                    } else {
-                        None
-                    }
+                    })
                 })
                 .next();
             if let Some(rel) = owned {
