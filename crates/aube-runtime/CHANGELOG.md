@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.0](https://github.com/aubepkg/aube/compare/aube-runtime-v2.10.1...aube-runtime-v2.11.0) - 2026-11-22
+
+### Fixed
+
+- *(install)* run prepare for git-hosted tarball deps ([#1984](https://github.com/aubepkg/aube/pull/1984))
+
 ## [2.7.2](https://github.com/aubepkg/aube/compare/aube-runtime-v2.7.1...aube-runtime-v2.7.2) - 2026-10-17
 
 ### Other
