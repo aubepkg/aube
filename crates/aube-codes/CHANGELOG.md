@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.0](https://github.com/aubepkg/aube/compare/aube-codes-v2.10.1...aube-codes-v2.11.0) - 2026-11-22
+
+### Added
+
+- *(lockfile)* write pnpm's experimental v13 lockfile ([#1979](https://github.com/aubepkg/aube/pull/1979))
+- *(lockfile)* read pnpm's experimental v13 lockfile ([#1977](https://github.com/aubepkg/aube/pull/1977))
+
 ## [2.10.1](https://github.com/aubepkg/aube/compare/aube-codes-v2.10.0...aube-codes-v2.10.1) - 2026-11-16
 
 ### Fixed
