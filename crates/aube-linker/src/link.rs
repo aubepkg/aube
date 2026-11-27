@@ -8,8 +8,9 @@ use crate::pool::with_link_pool;
 use crate::sweep::{
     EntryState, classify_entry_state, classify_local_entry_state, create_dir_link_idempotent,
     is_physical_importer, mkdirp, reconcile_dir_link, remove_hidden_hoist_tree,
-    sweep_dead_hidden_hoist_entries, sweep_stale_hidden_hoist_entries, sweep_stale_tmp_dirs,
-    sweep_stale_top_level_entries, try_remove_entry,
+    sweep_abandoned_hoist_staging, sweep_dead_hidden_hoist_entries,
+    sweep_stale_hidden_hoist_entries, sweep_stale_tmp_dirs, sweep_stale_top_level_entries,
+    try_remove_entry,
 };
 use crate::{Error, HoistedPlacements, LinkStats, Linker, NodeLinker, hoisted, sys};
 use aube_lockfile::{LocalSource, LockedPackage, LockfileGraph};
@@ -1661,8 +1662,7 @@ impl Linker {
             sweep_stale_hidden_hoist_entries(&hidden, &preserve);
         } else {
             sweep_dead_hidden_hoist_entries(&hidden);
-            // Staging links a crashed process never renamed into place.
-            sweep_stale_tmp_dirs(&hidden);
+            sweep_abandoned_hoist_staging(&hidden);
         }
         if packages.is_empty() {
             return Ok(());

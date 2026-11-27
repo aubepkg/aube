@@ -45,6 +45,42 @@ pub fn sweep_stale_tmp_dirs(virtual_store: &Path) {
     }
 }
 
+/// Reclaim staging links (`.tmp-<pid>-hoist-<n>`) that a crashed process
+/// built in the shared hidden hoist but never renamed into place.
+///
+/// Other installs may be linking into the same directory right now, and
+/// their staging entries live only between creation and rename. Owner
+/// liveness can't be checked portably, so only entries old enough that
+/// no in-flight link could still own them are removed. Removing the
+/// entry itself (never recursing) leaves the link target untouched.
+pub(crate) fn sweep_abandoned_hoist_staging(hidden: &Path) {
+    const ABANDONED_AFTER: std::time::Duration = std::time::Duration::from_secs(300);
+    let Ok(entries) = std::fs::read_dir(hidden) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(rest) = name.to_str().and_then(|n| n.strip_prefix(".tmp-")) else {
+            continue;
+        };
+        if !rest
+            .split_once("-hoist-")
+            .is_some_and(|(pid, _)| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
+        {
+            continue;
+        }
+        let path = entry.path();
+        let abandoned = std::fs::symlink_metadata(&path)
+            .and_then(|md| md.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age >= ABANDONED_AFTER);
+        if abandoned {
+            let _ = std::fs::remove_dir(&path).or_else(|_| std::fs::remove_file(&path));
+        }
+    }
+}
+
 /// Remove a directory with retry on Windows sharing violations.
 ///
 /// Windows does not let you delete a file while another process holds

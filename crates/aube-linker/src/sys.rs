@@ -115,8 +115,13 @@ pub(crate) fn create_dir_link_published(
     {
         // A relative target is relative to `link`, not to `staging`,
         // which may sit in another directory (`@scope/` vs its parent).
+        // Resolve it to an absolute path first: `link` itself may be
+        // relative (relative store roots are allowed), and a relative
+        // result would be joined onto `staging`'s parent a second time.
         let target = match link.parent() {
-            Some(parent) if !target.is_absolute() => normalize_path(&parent.join(target)),
+            Some(parent) if !target.is_absolute() => {
+                normalize_path(&std::path::absolute(parent.join(target))?)
+            }
             _ => target.to_path_buf(),
         };
         create_dir_link(&target, staging)?;
