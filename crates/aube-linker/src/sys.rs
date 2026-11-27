@@ -92,6 +92,71 @@ pub fn create_dir_link(target: &Path, link: &Path) -> io::Result<()> {
     }
 }
 
+/// Create a directory link at `link` that concurrent readers never see
+/// half-built.
+///
+/// A Unix symlink appears atomically, so this is [`create_dir_link`].
+/// A Windows junction does not: `junction::create` makes a plain empty
+/// directory, then opens it and sets the reparse point. A peer that
+/// looks in between sees an ordinary directory, takes it for junk, and
+/// deletes it. The creator then writes the reparse point into a
+/// delete-pending directory, and every later open of that name fails
+/// with `ERROR_ACCESS_DENIED` until the last handle closes. So on
+/// Windows the junction is built at `staging` (a fresh name on the same
+/// volume) and renamed into place. A rename never replaces an existing
+/// directory, so a peer that published first surfaces as
+/// `AlreadyExists` for the caller to reconcile.
+pub(crate) fn create_dir_link_published(
+    target: &Path,
+    link: &Path,
+    staging: &Path,
+) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        // A relative target is relative to `link`, not to `staging`,
+        // which may sit in another directory (`@scope/` vs its parent).
+        let target = match link.parent() {
+            Some(parent) if !target.is_absolute() => normalize_path(&parent.join(target)),
+            _ => target.to_path_buf(),
+        };
+        create_dir_link(&target, staging)?;
+        std::fs::rename(staging, link).map_err(|e| {
+            // Removes the junction itself, never its target's contents.
+            let _ = std::fs::remove_dir(staging);
+            if link.symlink_metadata().is_ok() {
+                io::Error::new(io::ErrorKind::AlreadyExists, e)
+            } else {
+                e
+            }
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = staging;
+        create_dir_link(target, link)
+    }
+}
+
+/// Whether a link operation on a path other processes also write may
+/// succeed if retried: a peer created or removed the entry in between
+/// (`AlreadyExists` / `NotFound`), or on Windows the entry is
+/// delete-pending or held open by a peer (`ERROR_ACCESS_DENIED` /
+/// `ERROR_SHARING_VIOLATION`).
+pub(crate) fn is_transient_shared_link_error(error: &io::Error) -> bool {
+    let peer_raced = matches!(
+        error.kind(),
+        io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
+    );
+    #[cfg(windows)]
+    {
+        peer_raced || is_retriable_link_error(error)
+    }
+    #[cfg(not(windows))]
+    {
+        peer_raced
+    }
+}
+
 #[cfg(windows)]
 fn create_junction_with_retry(target: &Path, link: &Path) -> io::Result<()> {
     let mut attempt = 0;
