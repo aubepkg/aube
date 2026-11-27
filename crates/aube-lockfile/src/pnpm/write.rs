@@ -125,53 +125,6 @@ fn relative_to_importer(path: &Path, importer: &str, root: &Path) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{relative_to_importer, with_patch_hash};
-    use proptest::prelude::*;
-    use std::path::Path;
-
-    #[test]
-    fn replaces_every_stale_patch_hash_suffix() {
-        let value = "1.0.0(patch_hash=old)(react@19)(patch_hash=duplicate)";
-        assert_eq!(
-            with_patch_hash(value, Some("current")),
-            "1.0.0(patch_hash=current)(react@19)"
-        );
-    }
-
-    proptest! {
-        #[test]
-        fn replacing_own_patch_hash_preserves_nested_peer_hashes(
-            version in "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
-            own_hash in "[a-f0-9]{64}",
-            peer_hash in "[a-f0-9]{64}",
-        ) {
-            let suffix = format!("(@scope/peer@{version}(patch_hash={peer_hash})(nested@1.0.0))");
-            let bare = format!("{version}{suffix}");
-            let patched = with_patch_hash(&bare, Some(&own_hash));
-            prop_assert_eq!(&patched, &format!("{version}(patch_hash={own_hash}){suffix}"));
-            prop_assert_eq!(with_patch_hash(&patched, Some(&own_hash)), patched.clone());
-            prop_assert_eq!(with_patch_hash(&patched, None), bare);
-        }
-    }
-
-    #[test]
-    fn member_link_paths_become_member_relative() {
-        let root = Path::new("/ws/proj");
-        let rel =
-            |path: &str, importer: &str| relative_to_importer(Path::new(path), importer, root);
-        assert_eq!(rel("packages/a/vendor/x", "packages/a"), "vendor/x");
-        assert_eq!(rel("libs/y", "packages/a"), "../../libs/y");
-        assert_eq!(rel("../outside", "packages/a"), "../../../outside");
-        assert_eq!(rel("packages/a", "packages/a"), ".");
-        // An importer outside the root reaches a root target through the
-        // root's directory name.
-        assert_eq!(rel("vendor/x", "../sibling"), "../proj/vendor/x");
-        assert_eq!(rel("../sibling/vendor/x", "../sibling"), "vendor/x");
-    }
-}
-
 /// Write a LockfileGraph as pnpm-lock.yaml v9 format to `path`, taking
 /// the lockfile's own directory as the project root. Only correct when the
 /// graph's importer keys and local paths are relative to that directory,
@@ -1481,4 +1434,51 @@ pub(super) fn is_pnpm_lockfile_name(name: &str) -> bool {
         || name
             .strip_prefix("pnpm-lock.")
             .is_some_and(|rest| rest.ends_with(".yaml") && rest.len() > ".yaml".len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{relative_to_importer, with_patch_hash};
+    use proptest::prelude::*;
+    use std::path::Path;
+
+    #[test]
+    fn replaces_every_stale_patch_hash_suffix() {
+        let value = "1.0.0(patch_hash=old)(react@19)(patch_hash=duplicate)";
+        assert_eq!(
+            with_patch_hash(value, Some("current")),
+            "1.0.0(patch_hash=current)(react@19)"
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn replacing_own_patch_hash_preserves_nested_peer_hashes(
+            version in "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
+            own_hash in "[a-f0-9]{64}",
+            peer_hash in "[a-f0-9]{64}",
+        ) {
+            let suffix = format!("(@scope/peer@{version}(patch_hash={peer_hash})(nested@1.0.0))");
+            let bare = format!("{version}{suffix}");
+            let patched = with_patch_hash(&bare, Some(&own_hash));
+            prop_assert_eq!(&patched, &format!("{version}(patch_hash={own_hash}){suffix}"));
+            prop_assert_eq!(with_patch_hash(&patched, Some(&own_hash)), patched.clone());
+            prop_assert_eq!(with_patch_hash(&patched, None), bare);
+        }
+    }
+
+    #[test]
+    fn member_link_paths_become_member_relative() {
+        let root = Path::new("/ws/proj");
+        let rel =
+            |path: &str, importer: &str| relative_to_importer(Path::new(path), importer, root);
+        assert_eq!(rel("packages/a/vendor/x", "packages/a"), "vendor/x");
+        assert_eq!(rel("libs/y", "packages/a"), "../../libs/y");
+        assert_eq!(rel("../outside", "packages/a"), "../../../outside");
+        assert_eq!(rel("packages/a", "packages/a"), ".");
+        // An importer outside the root reaches a root target through the
+        // root's directory name.
+        assert_eq!(rel("vendor/x", "../sibling"), "../proj/vendor/x");
+        assert_eq!(rel("../sibling/vendor/x", "../sibling"), "vendor/x");
+    }
 }

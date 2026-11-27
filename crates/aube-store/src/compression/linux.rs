@@ -113,47 +113,6 @@ fn try_preferred_codec(
     Ok(false)
 }
 
-#[cfg(test)]
-mod codec_tests {
-    use super::try_preferred_codec;
-
-    #[test]
-    fn retries_unsupported_codecs_in_preference_order() {
-        let mut tried = Vec::new();
-        let selected = try_preferred_codec(|codec| {
-            tried.push(codec.to_vec());
-            if codec == b"zlib" {
-                Ok(())
-            } else {
-                Err(std::io::Error::from_raw_os_error(libc::EINVAL))
-            }
-        })
-        .unwrap();
-        assert!(selected);
-        assert_eq!(tried, [b"zstd".to_vec(), b"lzo".to_vec(), b"zlib".to_vec()]);
-    }
-
-    #[test]
-    fn preserves_non_codec_errors_without_retrying() {
-        let mut attempts = 0;
-        let error = try_preferred_codec(|_| {
-            attempts += 1;
-            Err(std::io::Error::from_raw_os_error(libc::EIO))
-        })
-        .unwrap_err();
-        assert_eq!(attempts, 1);
-        assert_eq!(error.raw_os_error(), Some(libc::EIO));
-    }
-
-    #[test]
-    fn reports_when_all_codecs_are_unsupported() {
-        assert!(
-            !try_preferred_codec(|_| { Err(std::io::Error::from_raw_os_error(libc::EINVAL)) })
-                .unwrap()
-        );
-    }
-}
-
 /// Request compression on the empty file before streaming bytes into it.
 pub(crate) fn prepare_stream(file: &std::fs::File) -> Result<(), Error> {
     request_codec(file.as_raw_fd())
@@ -288,10 +247,9 @@ pub(crate) fn apply_bytes(
         context: "no parent dir",
         source: std::io::Error::from(std::io::ErrorKind::InvalidInput),
     })?;
-    let name = path.file_name().map_or_else(
-        || std::borrow::Cow::Borrowed("addon"),
-        |n| n.to_string_lossy(),
-    );
+    let name = path
+        .file_name()
+        .map_or(std::borrow::Cow::Borrowed("addon"), |n| n.to_string_lossy());
     let tmp = unique_tmp(dir, &name);
 
     let result = (|| {
@@ -378,4 +336,45 @@ pub(crate) fn clone_file(src: &Path, dest: &Path) -> Result<bool, Error> {
         let _ = std::fs::remove_file(dest);
     }
     Ok(cloned)
+}
+
+#[cfg(test)]
+mod codec_tests {
+    use super::try_preferred_codec;
+
+    #[test]
+    fn retries_unsupported_codecs_in_preference_order() {
+        let mut tried = Vec::new();
+        let selected = try_preferred_codec(|codec| {
+            tried.push(codec.to_vec());
+            if codec == b"zlib" {
+                Ok(())
+            } else {
+                Err(std::io::Error::from_raw_os_error(libc::EINVAL))
+            }
+        })
+        .unwrap();
+        assert!(selected);
+        assert_eq!(tried, [b"zstd".to_vec(), b"lzo".to_vec(), b"zlib".to_vec()]);
+    }
+
+    #[test]
+    fn preserves_non_codec_errors_without_retrying() {
+        let mut attempts = 0;
+        let error = try_preferred_codec(|_| {
+            attempts += 1;
+            Err(std::io::Error::from_raw_os_error(libc::EIO))
+        })
+        .unwrap_err();
+        assert_eq!(attempts, 1);
+        assert_eq!(error.raw_os_error(), Some(libc::EIO));
+    }
+
+    #[test]
+    fn reports_when_all_codecs_are_unsupported() {
+        assert!(
+            !try_preferred_codec(|_| { Err(std::io::Error::from_raw_os_error(libc::EINVAL)) })
+                .unwrap()
+        );
+    }
 }
