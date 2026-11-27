@@ -1288,7 +1288,14 @@ fn put_url(registry: &str, name: &str) -> String {
 /// Assemble the JSON body npm/pnpm send for `PUT /<name>`. The tarball
 /// URL we hand the registry is where *we think* the file will live; real
 /// registries rewrite it on ingest, so its exact form only needs to be
-/// parseable — we use `{registry}/{name}/-/{filename}` to match pnpm.
+/// parseable — we use `{registry}/{name}/-/{name}-{version}.tgz` to match
+/// libnpmpublish.
+///
+/// The attachment key is the *unsanitized* `{name}-{version}.tgz` (so
+/// `@scope/pkg-1.2.3.tgz` for scoped packages), not the on-disk
+/// `archive.filename` that `aube pack` writes. Some registries (AWS
+/// CodeArtifact) look the tarball up by that exact key and reject the
+/// publish when it's missing.
 fn build_publish_body(
     archive: &BuiltArchive,
     manifest: &PackageJson,
@@ -1300,11 +1307,11 @@ fn build_publish_body(
     let (shasum, integrity) = archive_hashes(archive);
     let b64_tarball = base64::engine::general_purpose::STANDARD.encode(&archive.tarball);
 
+    let attachment_name = format!("{}-{}.tgz", archive.name, archive.version);
     let tarball_url = format!(
-        "{}/{}/-/{}",
+        "{}/{}/-/{attachment_name}",
         registry_url.trim_end_matches('/'),
         archive.name,
-        archive.filename
     );
 
     // Start from the manifest JSON so every field the user set (scripts,
@@ -1336,7 +1343,7 @@ fn build_publish_body(
         "dist-tags": { tag: archive.version },
         "versions": { archive.version.clone(): version_doc },
         "_attachments": {
-            archive.filename.clone(): {
+            attachment_name: {
                 "content_type": "application/octet-stream",
                 "data": b64_tarball,
                 "length": archive.tarball.len(),
@@ -1361,7 +1368,7 @@ fn build_publish_body(
     // and `length` out of sync (length is the raw byte count) and the
     // registry would fail to decode the bundle.
     if let Some(bundle_json) = provenance_bundle_json {
-        let attachment_name = format!("{}-{}.sigstore", archive.name, archive.version);
+        let sigstore_name = format!("{}-{}.sigstore", archive.name, archive.version);
         let length = bundle_json.len();
         body.as_object_mut()
             .unwrap()
@@ -1369,7 +1376,7 @@ fn build_publish_body(
             .and_then(|v| v.as_object_mut())
             .ok_or_else(|| miette!("publish body missing _attachments object"))?
             .insert(
-                attachment_name,
+                sigstore_name,
                 serde_json::json!({
                     "content_type": "application/vnd.dev.sigstore.bundle+json;version=0.3",
                     "data": bundle_json,
@@ -1719,6 +1726,45 @@ mod tests {
             body["versions"]["2026.5.16"]["_id"],
             "@jdxcode/mise-linux-x64@2026.5.16"
         );
+    }
+
+    #[test]
+    fn publish_body_keys_scoped_attachment_by_unsanitized_name() {
+        let archive = BuiltArchive {
+            name: "@scope/pkg".to_string(),
+            version: "1.2.3".to_string(),
+            filename: tarball_filename("@scope/pkg", "1.2.3"),
+            files: vec!["package.json".to_string()],
+            unpacked_size: 42,
+            tarball: b"archive bytes".to_vec(),
+        };
+        let manifest: PackageJson = serde_json::from_value(serde_json::json!({
+            "name": "@scope/pkg",
+            "version": "1.2.3"
+        }))
+        .unwrap();
+
+        let body = build_publish_body(
+            &archive,
+            &manifest,
+            "https://registry.example/",
+            "latest",
+            None,
+            None,
+        )
+        .unwrap();
+
+        let attachments = body["_attachments"].as_object().unwrap();
+        assert_eq!(
+            attachments.keys().collect::<Vec<_>>(),
+            vec!["@scope/pkg-1.2.3.tgz"]
+        );
+        assert_eq!(
+            body["versions"]["1.2.3"]["dist"]["tarball"],
+            "https://registry.example/@scope/pkg/-/@scope/pkg-1.2.3.tgz"
+        );
+        // The on-disk pack filename stays sanitized.
+        assert_eq!(archive.filename, "scope-pkg-1.2.3.tgz");
     }
 
     #[test]
