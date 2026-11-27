@@ -3007,3 +3007,34 @@ fn local_peer_dependents_stay_in_each_project() {
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn sweep_abandoned_hoist_staging_keeps_in_flight_entries() {
+    use crate::sweep::sweep_abandoned_hoist_staging;
+
+    let dir = tempfile::tempdir().unwrap();
+    let hidden = dir.path().join("node_modules");
+    let fresh = hidden.join(".tmp-1-hoist-0");
+    let abandoned = hidden.join(".tmp-2-hoist-0");
+    let unrelated = hidden.join(".tmp-3-other");
+    for path in [&fresh, &abandoned, &unrelated] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    for path in [&abandoned, &unrelated] {
+        std::fs::File::open(path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+
+    sweep_abandoned_hoist_staging(&hidden);
+
+    assert!(
+        fresh.exists(),
+        "a peer's in-flight staging link must survive"
+    );
+    assert!(!abandoned.exists(), "an old staging link is reclaimed");
+    assert!(unrelated.exists(), "only hoist staging names are touched");
+}

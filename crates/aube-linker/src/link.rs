@@ -8,14 +8,20 @@ use crate::pool::with_link_pool;
 use crate::sweep::{
     EntryState, classify_entry_state, classify_local_entry_state, create_dir_link_idempotent,
     is_physical_importer, mkdirp, reconcile_dir_link, remove_hidden_hoist_tree,
-    sweep_dead_hidden_hoist_entries, sweep_stale_hidden_hoist_entries, sweep_stale_tmp_dirs,
-    sweep_stale_top_level_entries, try_remove_entry,
+    sweep_abandoned_hoist_staging, sweep_dead_hidden_hoist_entries,
+    sweep_stale_hidden_hoist_entries, sweep_stale_tmp_dirs, sweep_stale_top_level_entries,
+    try_remove_entry,
 };
 use crate::{Error, HoistedPlacements, LinkStats, Linker, NodeLinker, hoisted, sys};
 use aube_lockfile::{LocalSource, LockedPackage, LockfileGraph};
 use aube_store::PackageIndex;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
+
+/// Unique suffix for staging names of shared hidden-hoist links, which
+/// threads of one process build in parallel under the same pid.
+static HOIST_STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
 
 impl Linker {
     fn checked_modules_dir(&self, project_dir: &Path) -> Result<PathBuf, Error> {
@@ -1656,6 +1662,7 @@ impl Linker {
             sweep_stale_hidden_hoist_entries(&hidden, &preserve);
         } else {
             sweep_dead_hidden_hoist_entries(&hidden);
+            sweep_abandoned_hoist_staging(&hidden);
         }
         if packages.is_empty() {
             return Ok(());
@@ -1740,17 +1747,61 @@ impl Linker {
             // The shared GVS mirror can be linked by other processes at
             // the same time. A missing link may appear between reconcile
             // and create (`AlreadyExists`), so re-reconcile: an identical
-            // winner is kept, a different one is replaced. Bounded so two
-            // projects that keep flipping one name still terminate.
-            let mut attempts = 0;
+            // winner is kept, a different one is replaced. Links there
+            // are published whole (see `create_dir_link_published`) so a
+            // peer never mistakes a half-built Windows junction for junk,
+            // and a peer's in-flight removal (delete-pending, sharing
+            // violation) is retried. Bounded so two projects that keep
+            // flipping one name still terminate.
+            let shared = !sweep_stale_entries;
+            let mut attempts = 0u64;
             loop {
-                if reconcile_dir_link(&target_dir, &rel_target)? {
-                    return Ok(());
-                }
-                match sys::create_dir_link(&rel_target, &target_dir) {
+                let created = match reconcile_dir_link(&target_dir, &rel_target) {
+                    Ok(true) => return Ok(()),
+                    Ok(false) if shared => {
+                        let staging = hidden.join(format!(
+                            ".tmp-{}-hoist-{}",
+                            std::process::id(),
+                            HOIST_STAGING_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        ));
+                        sys::create_dir_link_published(&rel_target, &target_dir, &staging)
+                    }
+                    Ok(false) => sys::create_dir_link(&rel_target, &target_dir),
+                    Err(Error::Io(_, e)) if shared => Err(e),
+                    Err(e) => return Err(e),
+                };
+                match created {
                     Ok(()) => break,
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempts < 8 => {
+                    Err(e)
+                        if attempts < 8
+                            && if shared {
+                                sys::is_transient_shared_link_error(&e)
+                            } else {
+                                e.kind() == std::io::ErrorKind::AlreadyExists
+                            } =>
+                    {
                         attempts += 1;
+                        // A peer's sweep drops an `@scope/` dir the
+                        // moment it looks empty, which can be after this
+                        // pass created it. Recreating it can itself hit a
+                        // delete-pending dir, so a failure only costs this
+                        // attempt; the loop still surfaces the link error.
+                        let parent_restored = e.kind() == std::io::ErrorKind::NotFound
+                            && match mkdirp(link_parent) {
+                                Ok(()) => true,
+                                Err(err) => {
+                                    tracing::debug!(
+                                        "hidden-hoist: recreate {}: {err}",
+                                        link_parent.display()
+                                    );
+                                    false
+                                }
+                            };
+                        if !parent_restored && e.kind() != std::io::ErrorKind::AlreadyExists {
+                            // Delete-pending entries clear once the
+                            // peer closes its handle; give it a moment.
+                            std::thread::sleep(std::time::Duration::from_millis(5 * attempts));
+                        }
                     }
                     Err(e) => return Err(Error::Io(target_dir.clone(), e)),
                 }
