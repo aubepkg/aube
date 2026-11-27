@@ -1781,7 +1781,12 @@ impl Linker {
                             } =>
                     {
                         attempts += 1;
-                        if e.kind() != std::io::ErrorKind::AlreadyExists {
+                        if e.kind() == std::io::ErrorKind::NotFound {
+                            // A peer's sweep drops an `@scope/` dir the
+                            // moment it looks empty, which can be after
+                            // this pass created it.
+                            mkdirp(link_parent)?;
+                        } else if e.kind() != std::io::ErrorKind::AlreadyExists {
                             // Delete-pending entries clear once the
                             // peer closes its handle; give it a moment.
                             std::thread::sleep(std::time::Duration::from_millis(5 * attempts));
