@@ -29,6 +29,15 @@
             "command": "sh -c 'if ! command -v entire >/dev/null 2>&1; then exit 0; fi; exec entire hooks claude-code pre-task'"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "sh -c 'if command -v entire-brain >/dev/null 2>&1; then exec entire-brain hook pre-edit --claude-hook; fi; if command -v entire >/dev/null 2>&1; then exec entire brain hook pre-edit --claude-hook; fi; exit 0'",
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit"
       }
     ],
     "SessionEnd": [
