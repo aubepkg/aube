@@ -703,6 +703,10 @@ where
                         dep_path,
                         &pkg.name,
                         virtual_store_dir_max_length,
+                        // An explicit lockfile URL still needs the normal
+                        // verified-index or registry metadata path when this
+                        // project has no current local entry.
+                        pkg.tarball_url.is_none(),
                     )
                 }
                 _ => true,

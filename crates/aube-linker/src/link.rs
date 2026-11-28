@@ -1804,40 +1804,27 @@ impl Linker {
                 .map(|(_, entries)| entries)
         }
         .unwrap_or_default();
-        let plan_one = |(dep_path, pkg): &&(&String, &LockedPackage)| -> Result<Option<(PathBuf, PathBuf)>, Error> {
-            let source_subdir = if use_hashed_subdirs {
-                self.virtual_store_subdir(dep_path)
-            } else {
-                self.aube_dir_entry_name(dep_path)
-            };
-            let source_dir = source_root
-                .join(source_subdir)
-                .join("node_modules")
-                .join(&pkg.name);
-            let target_dir = hidden.join(&pkg.name);
-            let source_linked = linked_aube_entries.contains(dep_path.as_str());
-            if !source_linked && !source_dir.exists() {
-                if sweep_stale_entries {
-                    let points_to_live_collision =
-                        target_dir.canonicalize().ok().is_some_and(|target| {
-                            valid_collision_sources
-                                .get(&pkg.name.to_lowercase())
-                                .is_some_and(|targets| targets.contains(&target))
-                        });
-                    if !points_to_live_collision {
-                        try_remove_entry(&target_dir);
-                    }
+        let plan_one =
+            |(dep_path, pkg): &&(&String, &LockedPackage)| -> (PathBuf, Option<PathBuf>) {
+                let source_subdir = if use_hashed_subdirs {
+                    self.virtual_store_subdir(dep_path)
                 } else {
-                    // The sweep above left this name to us.
-                    sweep_dead_hidden_hoist_entry(&target_dir);
+                    self.aube_dir_entry_name(dep_path)
+                };
+                let source_dir = source_root
+                    .join(source_subdir)
+                    .join("node_modules")
+                    .join(&pkg.name);
+                let target_dir = hidden.join(&pkg.name);
+                let source_linked = linked_aube_entries.contains(dep_path.as_str());
+                if !source_linked && !source_dir.exists() {
+                    return (target_dir, None);
                 }
-                return Ok(None);
-            }
-            let link_parent = target_dir.parent().unwrap_or(&hidden);
-            let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
-                .unwrap_or_else(|| source_dir.clone());
-            Ok(Some((target_dir, rel_target)))
-        };
+                let link_parent = target_dir.parent().unwrap_or(&hidden);
+                let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
+                    .unwrap_or_else(|| source_dir.clone());
+                (target_dir, Some(rel_target))
+            };
         let shared = !sweep_stale_entries;
         // Make `target_dir` a link to `rel_target`. `known_missing` skips
         // the first reconcile for a link this pass already found absent.
@@ -1912,13 +1899,30 @@ impl Linker {
                     }
                 }
             };
-        let link_one = |entry: &&(&String, &LockedPackage)| -> Result<(), Error> {
-            let Some((target_dir, rel_target)) = plan_one(entry)? else {
-                return Ok(());
+        let publish_one =
+            |target_dir: &Path, rel_target: Option<&Path>, name: &str, known_missing| {
+                if let Some(rel_target) = rel_target {
+                    ensure_link(target_dir, rel_target, known_missing)?;
+                    trace!("hidden-hoist: {}", target_dir.display());
+                } else if shared {
+                    // The sweep above left this name to us.
+                    sweep_dead_hidden_hoist_entry(target_dir);
+                } else {
+                    let points_to_live_collision =
+                        target_dir.canonicalize().ok().is_some_and(|target| {
+                            valid_collision_sources
+                                .get(&name.to_lowercase())
+                                .is_some_and(|targets| targets.contains(&target))
+                        });
+                    if !points_to_live_collision {
+                        try_remove_entry(target_dir);
+                    }
+                }
+                Ok::<(), Error>(())
             };
-            ensure_link(&target_dir, &rel_target, false)?;
-            trace!("hidden-hoist: {}", entry.1.name);
-            Ok(())
+        let link_one = |entry: &&(&String, &LockedPackage)| -> Result<(), Error> {
+            let (target_dir, rel_target) = plan_one(entry);
+            publish_one(&target_dir, rel_target.as_deref(), &entry.1.name, false)
         };
         // Intentionally not counted in `stats.top_level_linked`. That
         // counter reflects the user-visible root `node_modules/<name>`
@@ -1931,32 +1935,33 @@ impl Linker {
             })?;
         } else {
             // The project's own hidden hoist directory belongs to this
-            // install alone. Check every entry in parallel, then create
-            // the missing links one after another: they share a parent
+            // install alone. Check every entry in parallel, then publish
+            // changes one at a time: links share a parent
             // directory, where concurrent creates interleaved with those
             // lookups contend on its lock (see `create_pending_local_links`).
-            let missing: Vec<(PathBuf, PathBuf)> = with_link_pool(self.link_parallelism(), || {
+            let pending: Vec<_> = with_link_pool(self.link_parallelism(), || {
                 independent
                     .par_iter()
-                    .filter_map(|entry| match plan_one(entry) {
-                        Ok(Some((target_dir, rel_target))) if hidden_was_absent => {
-                            Some(Ok((target_dir, rel_target)))
+                    .filter_map(|entry| {
+                        let (target_dir, rel_target) = plan_one(entry);
+                        if hidden_was_absent {
+                            return rel_target
+                                .map(|target| (target_dir, Some(target), &entry.1.name, true));
                         }
-                        Ok(Some((target_dir, rel_target))) => {
-                            match reconcile_dir_link(&target_dir, &rel_target) {
-                                Ok(true) => None,
-                                Ok(false) => Some(Ok((target_dir, rel_target))),
-                                Err(e) => Some(Err(e)),
-                            }
-                        }
-                        Ok(None) => None,
-                        Err(e) => Some(Err(e)),
+                        let known_missing = match rel_target.as_ref() {
+                            Some(target) => match std::fs::read_link(&target_dir) {
+                                Ok(existing) if existing == *target => return None,
+                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                                _ => false,
+                            },
+                            None => false,
+                        };
+                        Some((target_dir, rel_target, &entry.1.name, known_missing))
                     })
-                    .collect::<Result<_, Error>>()
-            })?;
-            for (target_dir, rel_target) in &missing {
-                ensure_link(target_dir, rel_target, true)?;
-                trace!("hidden-hoist: {}", target_dir.display());
+                    .collect()
+            });
+            for (target_dir, rel_target, name, known_missing) in &pending {
+                publish_one(target_dir, rel_target.as_deref(), name, *known_missing)?;
             }
         }
         case_colliding.iter().try_for_each(link_one)

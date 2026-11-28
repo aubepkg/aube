@@ -618,6 +618,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
 
     let use_global_virtual_store_override =
         gvs::resolve_global_virtual_store_override(&settings_ctx, &manifests, &opts.env_snapshot);
+    let engine_strict = aube_settings::resolved::engine_strict(&settings_ctx);
     // Fetch may skip packages whose shared virtual-store entry already
     // exists only when the isolated linker will link from those entries.
     // The hoisted linker copies from the store's index and files, so
@@ -1153,6 +1154,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 node_version: lock_node_version,
                 build_policy: lock_build_policy,
                 trust_shared_entries: trust_shared_entries_setting,
+                require_shared_manifest: engine_strict,
             })
             .await?;
             prewarm_project_local_dep_paths =
@@ -2014,6 +2016,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 node_version: node_version_for_prewarm.clone(),
                 build_policy: build_policy_for_prewarm.clone(),
                 trust_shared_entries: trust_shared_entries_setting,
+                require_shared_manifest: engine_strict,
             })
             .await?;
             engines_virtual_store_plan = Some(materialize_virtual_store_plan.clone());
@@ -2454,7 +2457,6 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
     //     All three go through the `settings_ctx` loaded once at the
     //     top of `run`, so there's a single `.npmrc` read and a
     //     single workspace-yaml parse for the whole install.
-    let engine_strict = aube_settings::resolved::engine_strict(&settings_ctx);
     // `childConcurrency` caps how many dep lifecycle scripts run in
     // parallel during the post-link allowBuilds phase. Matches pnpm's
     // default of 5 when unset. Zero gets clamped up to 1 inside
@@ -2471,6 +2473,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         &manifests,
         &graph_for_link,
         &package_indices,
+        &store,
         node_version.as_deref(),
         engine_strict,
         virtual_store_dir_max_length,

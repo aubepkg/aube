@@ -24,7 +24,7 @@
 
 use aube_lockfile::LockfileGraph;
 use aube_lockfile::dep_path_filename::dep_path_to_filename;
-use aube_store::PackageIndex;
+use aube_store::{PackageIndex, Store};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -243,16 +243,10 @@ pub type SharedPackageDir<'a> = dyn Fn(&str, &str) -> Option<std::path::PathBuf>
 /// missing or in the middle of being materialized (e.g. under
 /// `aube install --lockfile-only`, where the linker never runs).
 ///
-/// Error policy: `NotFound` on the materialized read falls through
-/// to the CAS fallback; `NotFound` on the CAS fallback means we
-/// have no `package.json` to check and we skip the dep. Any other
-/// I/O error (permission denied, disk corruption, partial read) on
-/// **either** path propagates as `miette::Error` so the user sees
-/// the real problem — swallowing it would silently turn
-/// `engine-strict` into a no-op on the affected package, which is
-/// exactly the trap `run_dep_lifecycle_scripts` and
-/// `read_materialized_pkg_json` already closed elsewhere in the
-/// PR.
+/// A shared manifest that disappeared or failed to parse can fall back to
+/// the package index. A strict check must be able to distinguish a package
+/// whose index lists no manifest from a missing manifest it expected to read.
+/// Other read failures surface with the path that was actually read.
 ///
 /// Only `engines.node` is read here. `engines.aube` is not checked on
 /// transitive deps — that field is for the project's own toolchain
@@ -260,13 +254,16 @@ pub type SharedPackageDir<'a> = dyn Fn(&str, &str) -> Option<std::path::PathBuf>
 /// care about `engines.aube` get it via `check_manifest_engines` on
 /// their own importer manifests. `engines.pnpm` is ignored everywhere;
 /// see the module docs.
-pub fn collect_dep_mismatches(
+#[allow(clippy::too_many_arguments)]
+fn collect_dep_mismatches(
     aube_dir: &Path,
     graph: &LockfileGraph,
     indices: &BTreeMap<String, PackageIndex>,
     node_version: &str,
     virtual_store_dir_max_length: usize,
     shared_package_dir: &SharedPackageDir<'_>,
+    store: Option<&Store>,
+    strict: bool,
 ) -> miette::Result<Vec<Mismatch>> {
     use miette::miette;
 
@@ -294,70 +291,78 @@ pub fn collect_dep_mismatches(
                 .join("node_modules")
                 .join(&pkg.name)
                 .join("package.json");
-            // Under the global virtual store, a package the fetch phase
-            // found already materialized in the shared store has no
-            // package index and, on a fresh `node_modules`, no local
-            // link yet either. Read its shared entry directly so the
-            // check still covers it.
-            let shared = shared_package_dir(dep_path, &pkg.name)
-                .map(|dir| std::fs::read_to_string(dir.join("package.json")));
-            let read = match shared {
-                Some(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                    std::fs::read_to_string(&materialized)
-                }
-                Some(read) => read,
-                None => std::fs::read_to_string(&materialized),
-            };
-            let content = match read {
-                Ok(s) => s,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    // Fallback: CAS read via the package index, which
-                    // is still populated for packages whose
-                    // virtual-store entry hadn't been created at
-                    // fetch time (e.g. `--lockfile-only`).
-                    let Some(stored) = indices
-                        .get(dep_path)
-                        .and_then(|idx| idx.get("package.json"))
-                    else {
-                        // No materialized file *and* no CAS entry —
-                        // nothing to check against, skip the dep.
-                        // This happens legitimately for `link:` deps
-                        // and for packages that ship without a
-                        // top-level `package.json`.
-                        return Ok(None);
-                    };
-                    match std::fs::read_to_string(&stored.store_path) {
-                        Ok(s) => s,
+            let shared =
+                shared_package_dir(dep_path, &pkg.name).map(|dir| dir.join("package.json"));
+            let read_manifest =
+                |path: &Path| -> miette::Result<Option<miette::Result<serde_json::Value>>> {
+                    let content = match std::fs::read(path) {
+                        Ok(content) => content,
                         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                         Err(e) => {
                             return Err(miette!(
-                                "failed to read CAS `package.json` for {}@{} at {}: {e}",
+                                "failed to read `package.json` for {}@{} at {}: {e}",
                                 pkg.name,
                                 pkg.version,
-                                stored.store_path.display()
+                                path.display()
                             ));
                         }
-                    }
-                }
-                Err(e) => {
+                    };
+                    Ok(Some(serde_json::from_slice(&content).map_err(|e| {
+                        miette!(
+                            code = aube_codes::errors::ERR_AUBE_MANIFEST_PARSE,
+                            "failed to parse `package.json` for {}@{} at {}: {e}",
+                            pkg.name,
+                            pkg.version,
+                            path.display()
+                        )
+                    })))
+                };
+            let shared_read = shared.as_deref().map(read_manifest).transpose()?.flatten();
+            let strict_shared_check = strict && shared.is_some() && pkg.local_source.is_none();
+            let parsed = if let Some(Ok(parsed)) = shared_read {
+                parsed
+            } else if shared_read.is_none()
+                && !strict_shared_check
+                && let Some(parsed) = read_manifest(&materialized)?
+            {
+                parsed?
+            } else {
+                let fallback_index = if shared.is_some()
+                    && !indices.contains_key(dep_path)
+                    && pkg.local_source.is_none()
+                {
+                    store.and_then(|store| {
+                        store.load_index(
+                            pkg.registry_name(),
+                            &pkg.version,
+                            pkg.integrity.as_deref(),
+                        )
+                    })
+                } else {
+                    None
+                };
+                let index = indices.get(dep_path).or(fallback_index.as_ref());
+                let stored = index.and_then(|index| index.get("package.json"));
+                if let Some(parsed) = stored
+                    .map(|file| read_manifest(&file.store_path))
+                    .transpose()?
+                    .flatten()
+                {
+                    parsed?
+                } else if let Some(Err(err)) = shared_read {
+                    return Err(err);
+                } else if strict_shared_check && (index.is_none() || stored.is_some()) {
                     return Err(miette!(
-                        "failed to read materialized `package.json` for {}@{} at {}: {e}",
+                        code = aube_codes::errors::ERR_AUBE_MISSING_STORE_FILE,
+                        "missing `package.json` for {}@{} at {} while checking engines",
                         pkg.name,
                         pkg.version,
-                        materialized.display()
+                        shared.as_deref().unwrap_or(&materialized).display()
                     ));
+                } else {
+                    return Ok(None);
                 }
             };
-            // Parse errors propagate. A truncated or corrupted
-            // `package.json` is the kind of thing a user genuinely
-            // wants to see, not an excuse to skip the check.
-            let parsed: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
-                miette!(
-                    "failed to parse `package.json` for {}@{}: {e}",
-                    pkg.name,
-                    pkg.version
-                )
-            })?;
             let Some(engines) = parsed.get("engines").and_then(|v| v.as_object()) else {
                 return Ok(None);
             };
@@ -427,6 +432,7 @@ pub fn run_checks(
     workspace_manifests: &[(String, aube_manifest::PackageJson)],
     graph: &LockfileGraph,
     indices: &BTreeMap<String, PackageIndex>,
+    store: &Store,
     node_version: Option<&str>,
     strict: bool,
     virtual_store_dir_max_length: usize,
@@ -462,6 +468,8 @@ pub fn run_checks(
             node_v,
             virtual_store_dir_max_length,
             shared_package_dir,
+            Some(store),
+            strict,
         )?);
     }
 
@@ -733,12 +741,69 @@ mod tests {
             "18.0.0",
             DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
             &|_, _| None,
+            None,
+            false,
         )
         .unwrap();
         assert_eq!(mismatches.len(), 1, "engine mismatch should be surfaced");
         assert_eq!(mismatches[0].package, "pkg@1.0.0");
         assert_eq!(mismatches[0].declared, ">=99");
         assert_eq!(mismatches[0].engine, Engine::Node);
+    }
+
+    #[test]
+    fn shared_manifest_uses_cas_when_missing_or_malformed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dep_path = "pkg@1.0.0";
+        let mut graph = LockfileGraph::default();
+        graph.packages.insert(
+            dep_path.into(),
+            aube_lockfile::LockedPackage {
+                name: "pkg".into(),
+                version: "1.0.0".into(),
+                ..Default::default()
+            },
+        );
+        let shared_dir = tmp.path().join("shared");
+        std::fs::create_dir(&shared_dir).unwrap();
+        let cas_path = tmp.path().join("cas-manifest");
+        std::fs::write(&cas_path, r#"{"engines":{"node":">=99"}}"#).unwrap();
+        let mut index = PackageIndex::default();
+        index.insert(
+            "package.json".into(),
+            aube_store::StoredFile {
+                hex_hash: String::new(),
+                store_path: cas_path,
+                executable: false,
+                size: None,
+            },
+        );
+        let check = |indices: &BTreeMap<String, PackageIndex>| {
+            collect_dep_mismatches(
+                &tmp.path().join("local"),
+                &graph,
+                indices,
+                "18.0.0",
+                120,
+                &|_, _| Some(shared_dir.clone()),
+                None,
+                true,
+            )
+        };
+        assert!(check(&BTreeMap::new()).is_err());
+        assert!(
+            check(&BTreeMap::from([(
+                dep_path.into(),
+                PackageIndex::default()
+            )]))
+            .unwrap()
+            .is_empty()
+        );
+        let indices = BTreeMap::from([(dep_path.into(), index)]);
+        assert_eq!(check(&indices).unwrap()[0].declared, ">=99");
+
+        std::fs::write(shared_dir.join("package.json"), b"{").unwrap();
+        assert_eq!(check(&indices).unwrap()[0].declared, ">=99");
     }
 
     // Guard against regressing the error-propagation fix. Unix-only
@@ -812,6 +877,8 @@ mod tests {
             "18.0.0",
             DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
             &|_, _| None,
+            None,
+            false,
         );
         // Restore perms so the tempdir can clean up cleanly.
         let mut perms = std::fs::metadata(&pkg_json).unwrap().permissions();

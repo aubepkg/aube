@@ -372,11 +372,9 @@ pub(crate) fn sweep_stale_hidden_hoist_entries(
 /// exists (or non-link junk) are reclaimed here; current-project names are
 /// still target-reconciled by `reconcile_top_level_link` below.
 ///
-/// Names in `relinked` are skipped: the caller reconciles each of those
-/// itself right after this sweep (replacing a dead link or junk with its
-/// own link, or sweeping it with [`sweep_dead_hidden_hoist_entry`] when
-/// it has no source), so checking them here too would only repeat two
-/// stats per name.
+/// The caller reconciles names in `relinked` after this sweep. On Windows,
+/// the sweep still removes real directories at those names because the
+/// link reconciler cannot replace a nonempty directory.
 pub(crate) fn sweep_dead_hidden_hoist_entries(
     hidden: &Path,
     relinked: &rustc_hash::FxHashSet<&str>,
@@ -389,7 +387,7 @@ pub(crate) fn sweep_dead_hidden_hoist_entries(
     // this is one or two stats per entry over a large tree. Collect the
     // names first and check them in parallel; each entry is
     // independent and every removal is best-effort.
-    let paths: Vec<(PathBuf, bool)> = entries
+    let paths: Vec<_> = entries
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name();
@@ -398,13 +396,14 @@ pub(crate) fn sweep_dead_hidden_hoist_entries(
                 return None;
             }
             let is_scope = name_str.starts_with('@');
-            if !is_scope && relinked.contains(name_str.as_ref()) {
+            let will_relink = !is_scope && relinked.contains(name_str.as_ref());
+            if !cfg!(windows) && will_relink {
                 return None;
             }
-            Some((entry.path(), is_scope))
+            Some((entry.path(), is_scope, will_relink))
         })
         .collect();
-    paths.par_iter().for_each(|(path, is_scope)| {
+    paths.par_iter().for_each(|(path, is_scope, will_relink)| {
         if *is_scope {
             match std::fs::symlink_metadata(path) {
                 Ok(md) if md.is_dir() && !md.file_type().is_symlink() => {
@@ -421,7 +420,11 @@ pub(crate) fn sweep_dead_hidden_hoist_entries(
             }
             return;
         }
-        sweep_dead_hidden_hoist_entry(path);
+        if !will_relink
+            || cfg!(windows) && matches!(classify_local_entry_state(path), EntryState::Fresh)
+        {
+            sweep_dead_hidden_hoist_entry(path);
+        }
     });
 }
 
@@ -436,10 +439,15 @@ fn sweep_dead_hidden_hoist_scope(scope_dir: &Path, relinked: &rustc_hash::FxHash
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with('.') || relinked.contains(format!("{scope}/{name}").as_str()) {
+        if name.starts_with('.') {
             continue;
         }
-        sweep_dead_hidden_hoist_entry(&entry.path());
+        let path = entry.path();
+        if !relinked.contains(format!("{scope}/{name}").as_str())
+            || cfg!(windows) && matches!(classify_local_entry_state(&path), EntryState::Fresh)
+        {
+            sweep_dead_hidden_hoist_entry(&path);
+        }
     }
 }
 
@@ -636,6 +644,29 @@ fn same_windows_path(a: &Path, b: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn shared_hoist_sweep_removes_relinked_real_directories_and_keeps_junctions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hidden = tmp.path().join("hidden");
+        let target = tmp.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        for name in ["pkg", "@scope/pkg"] {
+            let entry = hidden.join(name);
+            std::fs::create_dir_all(&entry).unwrap();
+            std::fs::write(entry.join("leftover"), "").unwrap();
+        }
+        let link = hidden.join("linked");
+        crate::sys::create_dir_link(&target, &link).unwrap();
+
+        let relinked = ["pkg", "@scope/pkg", "linked"].into_iter().collect();
+        super::sweep_dead_hidden_hoist_entries(&hidden, &relinked);
+
+        assert!(!hidden.join("pkg").exists());
+        assert!(!hidden.join("@scope/pkg").exists());
+        assert!(super::reconcile_dir_link(&link, &target).unwrap());
+    }
+
     /// `Store\pkg` and `store\pkg` under `root`, with `node_modules\pkg`
     /// linked to the former.
     #[cfg(windows)]

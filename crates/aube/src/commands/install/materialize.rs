@@ -46,6 +46,7 @@ pub(super) enum VirtualStorePlan {
         /// this install did not place itself, and under the hoisted
         /// linker, which doesn't link from shared entries.
         trust_shared_entries: bool,
+        require_shared_manifest: bool,
     },
     /// `.aube/<dep_path>` entries are per-project directories keyed by
     /// dep_path alone. Only unchanged subtrees survive the link phase's
@@ -71,12 +72,14 @@ impl VirtualStorePlan {
         dep_path: &str,
         pkg_name: &str,
         virtual_store_dir_max_length: usize,
+        allow_shared_only: bool,
     ) -> bool {
         match self {
             Self::Global {
                 virtual_store,
                 hashes,
                 trust_shared_entries,
+                require_shared_manifest,
                 ..
             } => {
                 let expected = virtual_store.join(dep_path_to_filename(
@@ -90,15 +93,30 @@ impl VirtualStorePlan {
                 // rename, so it is complete. That covers the warm repeat
                 // install, where `node_modules` was deleted but the
                 // global virtual store still holds every package.
-                if *trust_shared_entries {
-                    return expected.join("node_modules").join(pkg_name).exists();
+                let shared_package_exists = || {
+                    let package = expected.join("node_modules").join(pkg_name);
+                    if *require_shared_manifest {
+                        // Preserve index metadata for packages without a
+                        // manifest so strict checks can distinguish them
+                        // from a shared entry that disappears later.
+                        package.join("package.json").is_file()
+                    } else {
+                        package.exists()
+                    }
+                };
+                if *trust_shared_entries && allow_shared_only {
+                    return shared_package_exists();
                 }
                 // `read_link` then `exists`: the link has to name the
                 // target this graph expects, and that target has to be
                 // there. `exists` follows the link, so a dangling entry
                 // is a miss.
                 matches!(std::fs::read_link(entry), Ok(target) if target == expected)
-                    && entry.exists()
+                    && if *require_shared_manifest {
+                        shared_package_exists()
+                    } else {
+                        entry.exists()
+                    }
             }
             Self::PerProject { reusable } => reusable.contains(dep_path) && entry.exists(),
         }
@@ -177,6 +195,7 @@ pub(super) struct VirtualStorePlanInputs<'a> {
     /// copies from the store's own index and files, which fetch still
     /// has to verify. `--force` turns it off too.
     pub trust_shared_entries: bool,
+    pub require_shared_manifest: bool,
 }
 
 /// Decide the virtual-store layout and, under the global virtual
@@ -204,6 +223,7 @@ pub(super) async fn plan_virtual_store(
         node_version,
         build_policy,
         trust_shared_entries,
+        require_shared_manifest,
     } = inputs;
 
     // Probe linker built exactly the way the prewarm and link phases
@@ -284,6 +304,7 @@ pub(super) async fn plan_virtual_store(
         hashes: std::sync::Arc::new(hashes),
         project_local: std::sync::Arc::new(project_local),
         trust_shared_entries,
+        require_shared_manifest,
     })
 }
 
@@ -400,6 +421,15 @@ pub(super) async fn run_gvs_prewarm_materializer(
         .await;
     };
 
+    let linker_hashes = graph_hashes_arc.clone();
+    let linker_task = tokio::task::spawn_blocking(move || {
+        let mut linker = probe.with_graph_hashes((*linker_hashes).clone());
+        if !patches.is_empty() {
+            linker = linker.with_patches(patches);
+        }
+        std::sync::Arc::new(linker)
+    });
+
     let nested_link_targets =
         aube_linker::build_workspace_nested_link_targets(&cwd, &graph, &workspace_dirs)
             .map(std::sync::Arc::new);
@@ -443,16 +473,15 @@ pub(super) async fn run_gvs_prewarm_materializer(
         .cloned()
         .unwrap_or_default();
 
+    let linker = linker_task
+        .await
+        .into_diagnostic()
+        .wrap_err("prewarm linker setup failed")?;
     aube_util::diag::instant(
         aube_util::diag::Category::Materialize,
         "drain_rx_begin",
         None,
     );
-    let mut linker = probe.with_graph_hashes((*graph_hashes_arc).clone());
-    if !patches.is_empty() {
-        linker = linker.with_patches(patches);
-    }
-    let linker = std::sync::Arc::new(linker);
 
     /*
      * Adaptive linker parallelism. The signal is the same as the
