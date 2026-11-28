@@ -232,7 +232,17 @@ jobs:
           }
           trap restore_original_body ERR
           previous_tag="$(git describe --tags --abbrev=0 "${TAG}^")"
-          communique generate "$TAG" "$previous_tag" --github-release
+          # communique writes the review report before it updates the release,
+          # so add the report to the summary even when that update fails.
+          append_coverage() {
+            if [[ -f "$RUNNER_TEMP/communique-coverage.md" ]]; then
+              cat "$RUNNER_TEMP/communique-coverage.md" >> "$GITHUB_STEP_SUMMARY" ||
+                echo "::warning::could not add the communique coverage report to the job summary"
+            fi
+          }
+          trap append_coverage EXIT
+          communique generate "$TAG" "$previous_tag" --github-release \
+            --review-report "$RUNNER_TEMP/communique-coverage.md"
           body="$(gh release view "$TAG" --json body --jq .body)"
           expected="https://github.com/${GITHUB_REPOSITORY}/compare/${previous_tag}...${TAG}"
           self_comparison="https://github.com/${GITHUB_REPOSITORY}/compare/${TAG}...${TAG}"
