@@ -91,6 +91,21 @@ pub(super) fn write(
     }
 }
 
+/// Mirror the project's own `aube-lock.yaml` at `source` into the
+/// hidden lockfile by copying its bytes. Used when the install reuses
+/// that lockfile as-is from the project root: the copy parses to the
+/// same graph a [`write`] would serialize, without re-emitting a
+/// whole-graph YAML document on every install. Best-effort like
+/// [`write`].
+pub(super) fn copy_from(path: &Path, source: &Path) {
+    let result =
+        std::fs::read(source).and_then(|bytes| aube_util::fs_atomic::atomic_write(path, &bytes));
+    if let Err(e) = result {
+        tracing::debug!("failed to copy hidden lockfile {}: {e}", path.display());
+        remove(path);
+    }
+}
+
 /// Remove the hidden lockfile so an install that can't keep it current
 /// doesn't leave a stale copy behind for a later install to seed from.
 pub(super) fn remove(path: &Path) {

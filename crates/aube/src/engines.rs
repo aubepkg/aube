@@ -116,17 +116,25 @@ pub fn effective_node_version(override_: Option<&str>) -> Option<String> {
 /// earlier bare-`node` probe still gets its own binary probed, instead of
 /// returning the stale first result.
 fn probe_node_version(program: &std::path::Path) -> Option<String> {
+    type Probe = std::sync::Arc<std::sync::OnceLock<Option<String>>>;
     static PROBED: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, Option<String>>>,
+        std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, Probe>>,
     > = std::sync::OnceLock::new();
     let cache = PROBED.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     // Recover from a poisoned lock rather than panic: this runs in
     // embedded/library contexts, and a stale cache entry from a panicked
     // probe is harmless (worst case: one redundant `--version` spawn).
-    if let Some(cached) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(program) {
-        return cached.clone();
-    }
-    let probed = (|| {
+    // The map lock only guards finding the slot; the spawn runs outside
+    // it, and a caller that arrives while another thread's probe of the
+    // same program is in flight (see `prewarm_node_version`) waits for
+    // that result instead of spawning a second process.
+    let slot = cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(program.to_path_buf())
+        .or_default()
+        .clone();
+    slot.get_or_init(|| {
         let output = std::process::Command::new(program)
             .arg("--version")
             .output()
@@ -136,12 +144,27 @@ fn probe_node_version(program: &std::path::Path) -> Option<String> {
         }
         let s = String::from_utf8(output.stdout).ok()?;
         Some(s.trim().trim_start_matches('v').to_string())
-    })();
-    cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(program.to_path_buf(), probed.clone());
-    probed
+    })
+    .clone()
+}
+
+/// Start the `node --version` probe that [`effective_node_version`]
+/// would otherwise run when the install reaches its engines check, on a
+/// background thread, so the process spawn overlaps the install's
+/// earlier work. Does nothing when no probe would run: a `node-version`
+/// override or a runtime context that already knows its version.
+pub fn prewarm_node_version(override_: Option<&str>) {
+    if override_.is_some() || crate::runtime::current().is_some_and(|rt| rt.version.is_some()) {
+        return;
+    }
+    let program =
+        crate::runtime::node_execpath().unwrap_or_else(|| std::path::PathBuf::from("node"));
+    // Best effort: if the thread can't start, the probe runs inline later.
+    let _ = std::thread::Builder::new()
+        .name("aube-node-version".into())
+        .spawn(move || {
+            probe_node_version(&program);
+        });
 }
 
 /// Test whether `version` satisfies `range`. A version or range we can't

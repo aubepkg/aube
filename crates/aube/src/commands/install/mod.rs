@@ -607,6 +607,15 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         }
         phase_timings.record("root_preinstall", phase_start.elapsed());
     }
+    // The engines check needs the Node version once the lockfile is
+    // loaded. Probing it spawns `node --version`, which takes a few
+    // milliseconds of process startup; begin now so that overlaps
+    // lockfile parsing instead of blocking the install. Not earlier: the
+    // runtime switch and the root `preinstall` hooks above can change
+    // which Node the probed path runs, and the result is cached.
+    crate::engines::prewarm_node_version(
+        aube_settings::resolved::node_version(&settings_ctx).as_deref(),
+    );
     // Progress UI. `None` on non-TTY stderr, in text mode (e.g. `-v`), or
     // when progress output is otherwise disabled. A normal install produces
     // *no* output other than the bar itself — everything else is tracing at
@@ -1014,7 +1023,20 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 // in the platform pass below, after the host filter, so
                 // there's no full peer-correct graph to mirror. Drop
                 // any older copy instead of letting it go stale.
-                if matches!(
+                // An `aube-lock.yaml` in the project root that was reused
+                // as-is already is the hidden copy, byte for byte, so
+                // copy it rather than re-serializing the whole graph.
+                let reused_aube_lockfile = (kind == aube_lockfile::LockfileKind::Aube
+                    && lockfile_dir == cwd)
+                    .then(|| {
+                        aube_lockfile::active_lockfile_path_selecting(&lockfile_dir, Some(kind)).1
+                    })
+                    .flatten();
+                if let Some(source) = reused_aube_lockfile {
+                    hidden_lockfile_write_handle = Some(tokio::task::spawn_blocking(move || {
+                        hidden_lockfile::copy_from(&path, &source);
+                    }));
+                } else if matches!(
                     kind,
                     aube_lockfile::LockfileKind::Aube | aube_lockfile::LockfileKind::Pnpm
                 ) {

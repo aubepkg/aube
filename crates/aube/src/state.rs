@@ -870,105 +870,125 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
 
     let state_path = state_dir(project_dir);
     remove_legacy_state_file(&state_path)?;
-    // Captured *before* the hash: an edit landing between the two makes
-    // the stored meta stale relative to the hashed content, so the next
-    // freshness check misses the stat-only fast path and falls through
-    // to the hash — slow but correct. The reverse order would let a
-    // fresh-meta/stale-hash pair declare an edited lockfile up to date.
-    let lockfile_meta = active_lockfile(project_dir)
-        .1
-        .and_then(|path| FileMeta::capture(&path));
-    let (lockfile_hash, lockfile_snapshot_name) =
-        snapshot_active_lockfile(project_dir, &state_path)?;
-    let settings_hash = hash_settings(project_dir, cli_flags);
-    let install_layout = InstallLayoutState::from_graph(project_dir, &layout)?;
-    // A `link:` dep's manifest names the commands install links into its
-    // dependents' `.bin`, so an edit to its install shape busts the warm
-    // path like a workspace member's would. A target with no manifest yet
-    // is recorded as absent, so one created later busts it too.
-    for pkg in layout.graph.packages.values() {
-        if let Some(aube_lockfile::LocalSource::Link(rel)) = pkg.local_source.as_ref() {
-            let pkg_json = project_dir.join(rel).join("package.json");
-            package_json_hashes
-                .entry(relative_path_or_original(&pkg_json, project_dir))
-                .or_insert_with(|| {
-                    if pkg_json.is_file() {
-                        hash_file(&pkg_json)
-                    } else {
-                        ABSENT_PACKAGE_JSON_HASH.to_string()
-                    }
-                });
-        }
-    }
-
-    let package_json_shape_digests: BTreeMap<String, String> = package_json_hashes
-        .keys()
-        .filter_map(|rel| {
-            let path = if rel == "." {
-                project_dir.join("package.json")
-            } else {
-                project_dir.join(rel)
-            };
-            let bytes = std::fs::read(&path).ok()?;
-            let parsed: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-            Some((
-                rel.clone(),
-                hex::encode(aube_util::hash::manifest_install_shape_digest(&parsed)),
-            ))
-        })
-        .collect();
-
-    // Capture (size, mtime) per manifest so the next freshness check
-    // can skip the BLAKE3 hash on the warm path. See R1 docstring on
-    // FreshnessState.package_json_meta.
-    let package_json_meta: BTreeMap<String, FileMeta> = package_json_hashes
-        .keys()
-        .filter_map(|rel| {
-            let path = if rel == "." {
-                project_dir.join("package.json")
-            } else {
-                project_dir.join(rel)
-            };
-            FileMeta::capture(&path).map(|m| (rel.clone(), m))
-        })
-        .collect();
-
-    // `sharedWorkspaceLockfile=false` writes one lockfile per member and
-    // no shared root lockfile, so `lockfile_hash` is empty above.
-    // Fingerprint each member's lockfile so the warm path has something
-    // to verify; empty for the default shared layout.
-    let (member_lockfile_hashes, member_lockfile_meta) = collect_member_lockfile_state(project_dir);
-    let local_directory_hashes = collect_local_directory_hashes(project_dir, layout.graph)?;
+    // The license snapshot reads every package's manifest, which on a
+    // fresh `node_modules` is the whole graph. Build it alongside the
+    // install state below rather than after it; both are written once
+    // they're ready, in the same order as before.
     let license_fingerprint = license_state_fingerprint(&graph_lthash, &package_content_hashes);
-
-    let state = InstallState {
-        lockfile_hash,
-        lockfile_snapshot_name,
-        lockfile_meta,
-        member_lockfile_hashes,
-        member_lockfile_meta,
-        package_json_hashes,
-        package_json_meta,
-        local_directory_hashes: Some(local_directory_hashes),
-        aube_version: env!("CARGO_PKG_VERSION").to_string(),
-        section_filtered,
-        settings_hash,
-        package_content_hashes,
-        graph_lthash,
-        package_subtree_hashes,
-        package_json_shape_digests,
-        layout: Some(install_layout),
-        unreviewed_builds,
+    let collect_licenses = || -> Result<Option<Vec<u8>>, std::io::Error> {
+        if read_package_licenses(&state_path)
+            .as_ref()
+            .is_some_and(|licenses| licenses.fingerprint == license_fingerprint)
+        {
+            return Ok(None);
+        }
+        let license_state =
+            collect_package_license_state(project_dir, &layout, license_fingerprint.clone());
+        Ok(Some(serde_json::to_vec(&license_state)?))
     };
+    // Hashed here, on the install's own task: the hash reads task-local
+    // state (a per-call runtime's node executable, an embedder's store and
+    // cache overrides) that the rayon workers below don't inherit.
+    let settings_hash = hash_settings(project_dir, cli_flags);
+    // Fingerprinting copied local directories can fail (a source removed
+    // mid-install). Do it before the license scan starts, so that error
+    // returns at once instead of waiting on read-only license work.
+    let local_directory_hashes = collect_local_directory_hashes(project_dir, layout.graph)?;
+    let build_state = || -> Result<InstallState, std::io::Error> {
+        // Captured *before* the hash: an edit landing between the two makes
+        // the stored meta stale relative to the hashed content, so the next
+        // freshness check misses the stat-only fast path and falls through
+        // to the hash — slow but correct. The reverse order would let a
+        // fresh-meta/stale-hash pair declare an edited lockfile up to date.
+        let lockfile_meta = active_lockfile(project_dir)
+            .1
+            .and_then(|path| FileMeta::capture(&path));
+        let (lockfile_hash, lockfile_snapshot_name) =
+            snapshot_active_lockfile(project_dir, &state_path)?;
+        let install_layout = InstallLayoutState::from_graph(project_dir, &layout)?;
+        // A `link:` dep's manifest names the commands install links into its
+        // dependents' `.bin`, so an edit to its install shape busts the warm
+        // path like a workspace member's would. A target with no manifest yet
+        // is recorded as absent, so one created later busts it too.
+        for pkg in layout.graph.packages.values() {
+            if let Some(aube_lockfile::LocalSource::Link(rel)) = pkg.local_source.as_ref() {
+                let pkg_json = project_dir.join(rel).join("package.json");
+                package_json_hashes
+                    .entry(relative_path_or_original(&pkg_json, project_dir))
+                    .or_insert_with(|| {
+                        if pkg_json.is_file() {
+                            hash_file(&pkg_json)
+                        } else {
+                            ABSENT_PACKAGE_JSON_HASH.to_string()
+                        }
+                    });
+            }
+        }
+
+        let package_json_shape_digests: BTreeMap<String, String> = package_json_hashes
+            .keys()
+            .filter_map(|rel| {
+                let path = if rel == "." {
+                    project_dir.join("package.json")
+                } else {
+                    project_dir.join(rel)
+                };
+                let bytes = std::fs::read(&path).ok()?;
+                let parsed: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+                Some((
+                    rel.clone(),
+                    hex::encode(aube_util::hash::manifest_install_shape_digest(&parsed)),
+                ))
+            })
+            .collect();
+
+        // Capture (size, mtime) per manifest so the next freshness check
+        // can skip the BLAKE3 hash on the warm path. See R1 docstring on
+        // FreshnessState.package_json_meta.
+        let package_json_meta: BTreeMap<String, FileMeta> = package_json_hashes
+            .keys()
+            .filter_map(|rel| {
+                let path = if rel == "." {
+                    project_dir.join("package.json")
+                } else {
+                    project_dir.join(rel)
+                };
+                FileMeta::capture(&path).map(|m| (rel.clone(), m))
+            })
+            .collect();
+
+        // `sharedWorkspaceLockfile=false` writes one lockfile per member and
+        // no shared root lockfile, so `lockfile_hash` is empty above.
+        // Fingerprint each member's lockfile so the warm path has something
+        // to verify; empty for the default shared layout.
+        let (member_lockfile_hashes, member_lockfile_meta) =
+            collect_member_lockfile_state(project_dir);
+
+        Ok(InstallState {
+            lockfile_hash,
+            lockfile_snapshot_name,
+            lockfile_meta,
+            member_lockfile_hashes,
+            member_lockfile_meta,
+            package_json_hashes,
+            package_json_meta,
+            local_directory_hashes: Some(local_directory_hashes),
+            aube_version: env!("CARGO_PKG_VERSION").to_string(),
+            section_filtered,
+            settings_hash,
+            package_content_hashes,
+            graph_lthash,
+            package_subtree_hashes,
+            package_json_shape_digests,
+            layout: Some(install_layout),
+            unreviewed_builds,
+        })
+    };
+    let (license_json, state) = rayon::join(collect_licenses, build_state);
+    let state = state?;
 
     let fresh_state = FreshnessState::from(&state);
-    if read_package_licenses(&state_path)
-        .as_ref()
-        .is_none_or(|licenses| licenses.fingerprint != license_fingerprint)
-    {
-        let license_state =
-            collect_package_license_state(project_dir, &layout, license_fingerprint);
-        let license_json = serde_json::to_vec(&license_state)?;
+    if let Some(license_json) = license_json? {
         aube_util::fs_atomic::atomic_write(&license_state_file(&state_path), &license_json)?;
     }
     // Compact, not pretty: the per-package maps make this file O(graph)
@@ -1001,32 +1021,43 @@ fn collect_package_license_state(
     layout: &WriteStateLayout<'_>,
     fingerprint: String,
 ) -> InstallLicenseState {
-    let mut licenses = BTreeMap::new();
+    use rayon::prelude::*;
     let mut linked_package_dirs = BTreeMap::new();
-    for (dep_path, pkg) in &layout.graph.packages {
-        let package_dir = match pkg.local_source.as_ref() {
-            Some(aube_lockfile::LocalSource::Link(path)) => {
-                let package_dir = project_dir.join(path);
-                linked_package_dirs.insert(
-                    dep_path.clone(),
-                    relative_path_or_original(&package_dir, project_dir),
-                );
-                package_dir
-            }
-            _ => crate::commands::install::materialized_pkg_dir(
-                layout.aube_dir,
-                dep_path,
-                &pkg.name,
-                layout.virtual_store_dir_max_length,
-                layout.placements,
-            ),
-        };
-        if let Some(license) =
-            crate::commands::licenses::read_license(&package_dir).or_else(|| pkg.license.clone())
-        {
-            licenses.insert(dep_path.clone(), license);
-        }
-    }
+    let package_dirs: Vec<_> = layout
+        .graph
+        .packages
+        .iter()
+        .map(|(dep_path, pkg)| {
+            let package_dir = match pkg.local_source.as_ref() {
+                Some(aube_lockfile::LocalSource::Link(path)) => {
+                    let package_dir = project_dir.join(path);
+                    linked_package_dirs.insert(
+                        dep_path.clone(),
+                        relative_path_or_original(&package_dir, project_dir),
+                    );
+                    package_dir
+                }
+                _ => crate::commands::install::materialized_pkg_dir(
+                    layout.aube_dir,
+                    dep_path,
+                    &pkg.name,
+                    layout.virtual_store_dir_max_length,
+                    layout.placements,
+                ),
+            };
+            (dep_path, pkg, package_dir)
+        })
+        .collect();
+    // One manifest read and parse per package: on a fresh
+    // `node_modules` this runs for the whole graph, so spread it out.
+    let licenses: BTreeMap<String, String> = package_dirs
+        .par_iter()
+        .filter_map(|(dep_path, pkg, package_dir)| {
+            crate::commands::licenses::read_license(package_dir)
+                .or_else(|| pkg.license.clone())
+                .map(|license| ((*dep_path).clone(), license))
+        })
+        .collect();
     InstallLicenseState {
         fingerprint,
         licenses,
@@ -1465,6 +1496,9 @@ impl InstallLayoutState {
             .flat_map(|deps| deps.iter().map(|dep| dep.dep_path.clone()))
             .collect();
         for (dep_path, pkg) in &layout.graph.packages {
+            if !direct_dep_paths.contains(dep_path) {
+                continue;
+            }
             let is_link = matches!(
                 pkg.local_source.as_ref(),
                 Some(aube_lockfile::LocalSource::Link(_))
@@ -1479,9 +1513,6 @@ impl InstallLayoutState {
                     layout.placements,
                 ),
             };
-            if !direct_dep_paths.contains(dep_path) {
-                continue;
-            }
             let package_json_path = package_dir.join("package.json");
             packages.insert(
                 dep_path.clone(),

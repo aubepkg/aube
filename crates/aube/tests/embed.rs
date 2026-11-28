@@ -567,6 +567,7 @@ async fn facade_binds_node_bins_and_refreshes_warm_install_bindings() {
         std::process::Command::new(&bin).output().unwrap().stdout,
         b"first\n"
     );
+    let first_settings_hash = stored_settings_hash(project.path());
     options.frozen_mode = aube::embed::FrozenMode::Frozen;
     // No-op replay retains the binding.
     aube::embed::install_with_overrides(options.clone(), overrides.clone())
@@ -585,6 +586,9 @@ async fn facade_binds_node_bins_and_refreshes_warm_install_bindings() {
         std::process::Command::new(&bin).output().unwrap().stdout,
         b"second\n"
     );
+    // The saved state records the binding it was written under, so the
+    // next replay with the same binding is fresh instead of reinstalling.
+    assert_ne!(stored_settings_hash(project.path()), first_settings_hash);
     options.runtime = None;
     aube::embed::install_with_overrides(options, overrides)
         .await
@@ -596,6 +600,13 @@ async fn facade_binds_node_bins_and_refreshes_warm_install_bindings() {
             .node,
         None
     );
+}
+
+#[cfg(unix)]
+fn stored_settings_hash(project: &std::path::Path) -> String {
+    let state = std::fs::read(project.join("node_modules/.testhost-state/state.json")).unwrap();
+    let state: serde_json::Value = serde_json::from_slice(&state).unwrap();
+    state["settings_hash"].as_str().unwrap().to_string()
 }
 
 #[tokio::test]
