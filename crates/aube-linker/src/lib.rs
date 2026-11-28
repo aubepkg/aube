@@ -115,6 +115,11 @@ pub struct Linker {
     /// What the last `link_all` recorded for
     /// [`Linker::take_gvs_dep_link_targets`].
     gvs_dep_link_targets: std::sync::Mutex<Option<GvsDepLinkTargets>>,
+    /// The `.aube` dir link step 1 just populated and the dep paths whose
+    /// `<entry>` there it left resolving: linked to a shared entry it
+    /// found or placed, or materialized project-local. The hidden hoist
+    /// that follows takes it instead of statting every source again.
+    linked_aube_entries: std::sync::Mutex<Option<(PathBuf, rustc_hash::FxHashSet<String>)>>,
     strategy: LinkStrategy,
     /// Per-`name@version` patch contents applied at materialize
     /// time. Empty when the project has no `pnpm.patchedDependencies`.
@@ -130,6 +135,10 @@ pub struct Linker {
     /// (backwards-compatible with pre-hash callers and with the
     /// per-project `.aube/` layout, which always uses dep_path).
     hashes: Option<GraphHashes>,
+    /// `virtual_store_subdir` for every dep_path in `hashes`, computed
+    /// once when the hashes (or the length cap) are set. Each package's
+    /// subdir is otherwise rebuilt for every edge that points at it.
+    virtual_store_subdirs: rustc_hash::FxHashMap<String, String>,
     /// Cap on the length of a single virtual-store directory name.
     /// Matches pnpm's `virtual-store-dir-max-length` config (default
     /// 120). Every dep_path the linker writes to disk gets routed

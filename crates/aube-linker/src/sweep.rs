@@ -371,51 +371,81 @@ pub(crate) fn sweep_stale_hidden_hoist_entries(
 /// project may still need that link. Only entries whose target no longer
 /// exists (or non-link junk) are reclaimed here; current-project names are
 /// still target-reconciled by `reconcile_top_level_link` below.
-pub(crate) fn sweep_dead_hidden_hoist_entries(hidden: &Path) {
+///
+/// Names in `relinked` are skipped: the caller reconciles each of those
+/// itself right after this sweep (replacing a dead link or junk with its
+/// own link, or sweeping it with [`sweep_dead_hidden_hoist_entry`] when
+/// it has no source), so checking them here too would only repeat two
+/// stats per name.
+pub(crate) fn sweep_dead_hidden_hoist_entries(
+    hidden: &Path,
+    relinked: &rustc_hash::FxHashSet<&str>,
+) {
+    use rayon::prelude::*;
     let Ok(entries) = std::fs::read_dir(hidden) else {
         return;
     };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with('.') {
-            continue;
-        }
-        let path = entry.path();
-        if name_str.starts_with('@') {
-            match std::fs::symlink_metadata(&path) {
+    // The shared GVS mirror holds every project's hoisted names, so
+    // this is one or two stats per entry over a large tree. Collect the
+    // names first and check them in parallel; each entry is
+    // independent and every removal is best-effort.
+    let paths: Vec<(PathBuf, bool)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with('.') {
+                return None;
+            }
+            let is_scope = name_str.starts_with('@');
+            if !is_scope && relinked.contains(name_str.as_ref()) {
+                return None;
+            }
+            Some((entry.path(), is_scope))
+        })
+        .collect();
+    paths.par_iter().for_each(|(path, is_scope)| {
+        if *is_scope {
+            match std::fs::symlink_metadata(path) {
                 Ok(md) if md.is_dir() && !md.file_type().is_symlink() => {
-                    sweep_dead_hidden_hoist_scope(&path);
-                    if std::fs::read_dir(&path)
+                    sweep_dead_hidden_hoist_scope(path, relinked);
+                    if std::fs::read_dir(path)
                         .map(|mut d| d.next().is_none())
                         .unwrap_or(false)
                     {
-                        let _ = std::fs::remove_dir(&path);
+                        let _ = std::fs::remove_dir(path);
                     }
                 }
-                Ok(_) => sweep_dead_hidden_hoist_entry(&path),
+                Ok(_) => sweep_dead_hidden_hoist_entry(path),
                 Err(_) => {}
             }
-            continue;
+            return;
         }
-        sweep_dead_hidden_hoist_entry(&path);
-    }
+        sweep_dead_hidden_hoist_entry(path);
+    });
 }
 
-fn sweep_dead_hidden_hoist_scope(scope_dir: &Path) {
+fn sweep_dead_hidden_hoist_scope(scope_dir: &Path, relinked: &rustc_hash::FxHashSet<&str>) {
     let Ok(entries) = std::fs::read_dir(scope_dir) else {
         return;
     };
+    let scope = scope_dir
+        .file_name()
+        .map(|scope| scope.to_string_lossy())
+        .unwrap_or_default();
     for entry in entries.flatten() {
         let name = entry.file_name();
-        if name.to_string_lossy().starts_with('.') {
+        let name = name.to_string_lossy();
+        if name.starts_with('.') || relinked.contains(format!("{scope}/{name}").as_str()) {
             continue;
         }
         sweep_dead_hidden_hoist_entry(&entry.path());
     }
 }
 
-fn sweep_dead_hidden_hoist_entry(path: &Path) {
+/// Remove one shared hidden-hoist entry if it is a dangling link or
+/// anything other than a link.
+pub(crate) fn sweep_dead_hidden_hoist_entry(path: &Path) {
     match std::fs::symlink_metadata(path) {
         Ok(md) if md.file_type().is_symlink() && path.exists() => {}
         Ok(md) if md.file_type().is_symlink() => {

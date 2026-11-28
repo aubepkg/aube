@@ -132,6 +132,45 @@ fn is_transient_rename_error(err: &io::Error) -> bool {
 pub(crate) static FORCE_REFLINK_FAILURE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Relative target of the link at `<subdir>/node_modules/<dep_name>`
+/// to a sibling entry `<sibling_subdir>/node_modules/<dep_name>` in the
+/// same virtual store. Both entry names are single path components
+/// (`dep_path_to_filename` escapes `/`), so this is the `pathdiff`
+/// result spelled out: up out of `node_modules` (and the `@scope`
+/// directory for a scoped name) and the entry, then down into the
+/// sibling. Callers keep `pathdiff` for a sibling that shares the
+/// entry's own name, where the two paths overlap further.
+#[cfg(not(windows))]
+fn sibling_link_target(sibling_subdir: &str, dep_name: &str) -> PathBuf {
+    let mut target = PathBuf::from(if dep_name.contains('/') {
+        "../../.."
+    } else {
+        "../.."
+    });
+    target.push(sibling_subdir);
+    target.push("node_modules");
+    target.push(dep_name);
+    target
+}
+
+/// What [`Linker::virtual_store_hit`] found in the shared store.
+pub(crate) enum VirtualStoreLookup {
+    /// No reusable entry: the package has to be materialized.
+    Miss,
+    /// The entry is there. `reconciled_targets` holds the dependency
+    /// links it repaired, when it had to, so callers that record them
+    /// don't derive the same list a second time.
+    Hit {
+        reconciled_targets: Option<Vec<(String, PathBuf)>>,
+    },
+}
+
+impl VirtualStoreLookup {
+    pub(crate) fn is_hit(&self) -> bool {
+        matches!(self, Self::Hit { .. })
+    }
+}
+
 impl Linker {
     /// Detect the best linking strategy for the filesystem at the given path.
     ///
@@ -294,6 +333,74 @@ impl Linker {
         stats: &mut LinkStats,
         nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
     ) -> Result<(), Error> {
+        if self
+            .virtual_store_hit(dep_path, subdir, pkg, stats, nested_link_targets)?
+            .is_hit()
+        {
+            return Ok(());
+        }
+        self.materialize_into_virtual_store(
+            dep_path,
+            subdir,
+            pkg,
+            index,
+            stats,
+            nested_link_targets,
+        )
+    }
+
+    /// Whether `subdir` already holds a materialized copy of `dep_path`
+    /// this linker may reuse, repairing its dependency links if so.
+    ///
+    /// A shared entry only appears through the atomic rename in
+    /// [`Self::materialize_into_virtual_store`], so one that exists is
+    /// complete, and reusing it needs no `PackageIndex`. Link step 1
+    /// checks this before it looks an index up, which lets a fresh
+    /// `node_modules` over a warm global virtual store skip every store
+    /// index read.
+    pub(crate) fn virtual_store_hit(
+        &self,
+        dep_path: &str,
+        subdir: &str,
+        pkg: &LockedPackage,
+        stats: &mut LinkStats,
+        nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
+    ) -> Result<VirtualStoreLookup, Error> {
+        // Under `--force` an existing entry is only trusted when this very
+        // install just placed it.
+        let fresh = self.fresh_virtual_store_entries.contains(dep_path);
+        if self.force && !fresh {
+            return Ok(VirtualStoreLookup::Miss);
+        }
+        let pkg_nm_dir = self
+            .virtual_store
+            .join(subdir)
+            .join("node_modules")
+            .join(&pkg.name);
+        if !pkg_nm_dir.exists() {
+            return Ok(VirtualStoreLookup::Miss);
+        }
+        let reconciled_targets = if fresh {
+            None
+        } else {
+            Some(self.reconcile_virtual_store_entry(dep_path, pkg, nested_link_targets)?)
+        };
+        trace!("virtual store hit: {dep_path}");
+        stats.packages_cached += 1;
+        Ok(VirtualStoreLookup::Hit { reconciled_targets })
+    }
+
+    /// The miss half of [`Self::ensure_in_virtual_store_with_subdir`]:
+    /// materialize `dep_path` from `index` and rename it into place.
+    pub(crate) fn materialize_into_virtual_store(
+        &self,
+        dep_path: &str,
+        subdir: &str,
+        pkg: &LockedPackage,
+        index: &PackageIndex,
+        stats: &mut LinkStats,
+        nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
+    ) -> Result<(), Error> {
         let _diag =
             aube_util::diag::Span::new(aube_util::diag::Category::Linker, "ensure_in_vstore")
                 .with_meta_fn(|| {
@@ -303,23 +410,6 @@ impl Linker {
                         index.len()
                     )
                 });
-        let pkg_nm_dir = self
-            .virtual_store
-            .join(subdir)
-            .join("node_modules")
-            .join(&pkg.name);
-
-        // Under `--force` an existing entry is only trusted when this very
-        // install just placed it.
-        let trust_existing = !self.force || self.fresh_virtual_store_entries.contains(dep_path);
-        if trust_existing && pkg_nm_dir.exists() {
-            if !self.fresh_virtual_store_entries.contains(dep_path) {
-                self.reconcile_virtual_store_entry(dep_path, pkg, nested_link_targets)?;
-            }
-            trace!("virtual store hit: {dep_path}");
-            stats.packages_cached += 1;
-            return Ok(());
-        }
 
         // Materialize into a temp directory, then atomically rename into place
         // to avoid TOCTOU races between concurrent `aube install` processes.
@@ -427,10 +517,9 @@ impl Linker {
         nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
     ) -> Result<Vec<(String, PathBuf)>, Error> {
         #[cfg(not(windows))]
-        let pkg_nm_parent = self
-            .virtual_store
-            .join(self.virtual_store_subdir(dep_path))
-            .join("node_modules");
+        let own_subdir = self.virtual_store_subdir(dep_path);
+        #[cfg(not(windows))]
+        let pkg_nm_parent = self.virtual_store.join(&own_subdir).join("node_modules");
         let mut targets = Vec::with_capacity(pkg.dependencies.len());
         for (dep_name, dep_version) in &pkg.dependencies {
             if dep_name == &pkg.name {
@@ -446,15 +535,24 @@ impl Linker {
                 let sibling_subdir = self.virtual_store_subdir(&dep_dep_path);
                 #[cfg(not(windows))]
                 {
-                    let sibling_abs = self
-                        .virtual_store
-                        .join(sibling_subdir)
-                        .join("node_modules")
-                        .join(dep_name);
-                    let symlink_path = pkg_nm_parent.join(dep_name);
-                    let link_parent = symlink_path.parent().unwrap_or(&pkg_nm_parent);
-                    pathdiff::diff_paths(&sibling_abs, link_parent)
-                        .unwrap_or_else(|| sibling_abs.clone())
+                    let diff = || {
+                        let sibling_abs = self
+                            .virtual_store
+                            .join(&sibling_subdir)
+                            .join("node_modules")
+                            .join(dep_name);
+                        let symlink_path = pkg_nm_parent.join(dep_name);
+                        let link_parent = symlink_path.parent().unwrap_or(&pkg_nm_parent);
+                        pathdiff::diff_paths(&sibling_abs, link_parent)
+                            .unwrap_or_else(|| sibling_abs.clone())
+                    };
+                    if sibling_subdir == own_subdir {
+                        diff()
+                    } else {
+                        let target = sibling_link_target(&sibling_subdir, dep_name);
+                        debug_assert_eq!(target, diff());
+                        target
+                    }
                 }
                 #[cfg(windows)]
                 {

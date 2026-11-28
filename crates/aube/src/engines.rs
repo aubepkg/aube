@@ -215,6 +215,11 @@ fn check_manifest_engines(
     out
 }
 
+/// Maps `(dep_path, package name)` to the package's directory in the
+/// global virtual store, when the install uses one. See
+/// `VirtualStorePlan::shared_package_dir`.
+pub type SharedPackageDir<'a> = dyn Fn(&str, &str) -> Option<std::path::PathBuf> + Sync + 'a;
+
 /// Read each locked package's `package.json` and collect any
 /// `engines.node` mismatches. Runs in parallel via rayon — each
 /// read is small and independent.
@@ -261,6 +266,7 @@ pub fn collect_dep_mismatches(
     indices: &BTreeMap<String, PackageIndex>,
     node_version: &str,
     virtual_store_dir_max_length: usize,
+    shared_package_dir: &SharedPackageDir<'_>,
 ) -> miette::Result<Vec<Mismatch>> {
     use miette::miette;
 
@@ -288,7 +294,21 @@ pub fn collect_dep_mismatches(
                 .join("node_modules")
                 .join(&pkg.name)
                 .join("package.json");
-            let content = match std::fs::read_to_string(&materialized) {
+            // Under the global virtual store, a package the fetch phase
+            // found already materialized in the shared store has no
+            // package index and, on a fresh `node_modules`, no local
+            // link yet either. Read its shared entry directly so the
+            // check still covers it.
+            let shared = shared_package_dir(dep_path, &pkg.name)
+                .map(|dir| std::fs::read_to_string(dir.join("package.json")));
+            let read = match shared {
+                Some(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    std::fs::read_to_string(&materialized)
+                }
+                Some(read) => read,
+                None => std::fs::read_to_string(&materialized),
+            };
+            let content = match read {
                 Ok(s) => s,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     // Fallback: CAS read via the package index, which
@@ -411,6 +431,7 @@ pub fn run_checks(
     strict: bool,
     virtual_store_dir_max_length: usize,
     self_engines_check: bool,
+    shared_package_dir: &SharedPackageDir<'_>,
 ) -> miette::Result<()> {
     let mut mismatches = Vec::new();
 
@@ -440,6 +461,7 @@ pub fn run_checks(
             indices,
             node_v,
             virtual_store_dir_max_length,
+            shared_package_dir,
         )?);
     }
 
@@ -710,6 +732,7 @@ mod tests {
             &indices,
             "18.0.0",
             DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
+            &|_, _| None,
         )
         .unwrap();
         assert_eq!(mismatches.len(), 1, "engine mismatch should be surfaced");
@@ -788,6 +811,7 @@ mod tests {
             &indices,
             "18.0.0",
             DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
+            &|_, _| None,
         );
         // Restore perms so the tempdir can clean up cleanly.
         let mut perms = std::fs::metadata(&pkg_json).unwrap().permissions();

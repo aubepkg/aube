@@ -686,9 +686,11 @@ where
     // share the package. Packages that will take the already-linked
     // shortcut never needed a load, so they are excluded here to keep
     // the shortcut's zero-read behavior.
-    let needs_check: Vec<bool> = packages
-        .iter()
-        .map(|(dep_path, pkg)| {
+    // One `stat` per package; spread over the pool, since a deep path
+    // lookup on an overlay or network filesystem is not free.
+    let needs_check: Vec<bool> = packages_refs
+        .par_iter()
+        .map(|&(dep_path, pkg)| {
             if pkg.local_source.is_some() {
                 return false;
             }
@@ -696,7 +698,12 @@ where
                 Some(plan) if !force_index_dep_paths.contains(dep_path) => {
                     let entry_name = dep_path_to_filename(dep_path, virtual_store_dir_max_length);
                     let entry = aube_dir.join(&entry_name);
-                    !plan.entry_is_current(&entry, dep_path, virtual_store_dir_max_length)
+                    !plan.entry_is_current(
+                        &entry,
+                        dep_path,
+                        &pkg.name,
+                        virtual_store_dir_max_length,
+                    )
                 }
                 _ => true,
             }

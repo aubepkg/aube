@@ -28,9 +28,11 @@ impl Linker {
             precomputed_project_local_dep_paths: None,
             fresh_virtual_store_entries: rustc_hash::FxHashSet::default(),
             gvs_dep_link_targets: std::sync::Mutex::new(None),
+            linked_aube_entries: std::sync::Mutex::default(),
             strategy,
             patches: Patches::new(),
             hashes: None,
+            virtual_store_subdirs: rustc_hash::FxHashMap::default(),
             virtual_store_dir_max_length: DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
             shamefully_hoist: false,
             public_hoist_patterns: Vec::new(),
@@ -311,6 +313,7 @@ impl Linker {
     /// leave it at the default.
     pub fn with_virtual_store_dir_max_length(mut self, max_length: usize) -> Self {
         self.virtual_store_dir_max_length = max_length;
+        self.refresh_virtual_store_subdirs();
         self
     }
 
@@ -365,7 +368,26 @@ impl Linker {
     /// result in here.
     pub fn with_graph_hashes(mut self, hashes: GraphHashes) -> Self {
         self.hashes = Some(hashes);
+        self.refresh_virtual_store_subdirs();
         self
+    }
+
+    fn refresh_virtual_store_subdirs(&mut self) {
+        use rayon::prelude::*;
+        let max_length = self.virtual_store_dir_max_length;
+        self.virtual_store_subdirs = match &self.hashes {
+            Some(h) => h
+                .node_hash
+                .par_iter()
+                .map(|(dep_path, _)| {
+                    (
+                        dep_path.clone(),
+                        dep_path_to_filename(&h.hashed_dep_path(dep_path), max_length),
+                    )
+                })
+                .collect(),
+            None => rustc_hash::FxHashMap::default(),
+        };
     }
 
     /// Directory name for `dep_path` inside the global virtual store.
@@ -373,6 +395,9 @@ impl Linker {
     /// runs the result through `dep_path_to_filename` so the final
     /// name is both filesystem-safe and bounded.
     pub(crate) fn virtual_store_subdir(&self, dep_path: &str) -> String {
+        if let Some(subdir) = self.virtual_store_subdirs.get(dep_path) {
+            return subdir.clone();
+        }
         let hashed = match &self.hashes {
             Some(h) => h.hashed_dep_path(dep_path),
             None => dep_path.to_string(),

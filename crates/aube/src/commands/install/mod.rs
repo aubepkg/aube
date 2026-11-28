@@ -944,6 +944,10 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         Vec<String>,
     )>;
     let prewarm_project_local_dep_paths;
+    // The virtual-store plan the fetch phase used. The engines check
+    // reads package manifests from the shared entries it points at for
+    // packages fetch skipped without loading an index.
+    let engines_virtual_store_plan: Option<materialize::VirtualStorePlan>;
     // The cold-install lockfile write runs on a `spawn_blocking` task so it
     // overlaps `filter_graph` + the link phase (see
     // `lockfile_write_overlap`). The handle escapes the resolve match arm
@@ -1131,10 +1135,12 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 patch_hashes: lock_patch_hashes,
                 node_version: lock_node_version,
                 build_policy: lock_build_policy,
+                force: opts.force,
             })
             .await?;
             prewarm_project_local_dep_paths =
                 lock_virtual_store_plan.project_local_dep_paths().cloned();
+            engines_virtual_store_plan = Some(lock_virtual_store_plan.clone());
             let lock_prewarm_inputs = GvsPrewarmInputs {
                 graph: lock_materialize_graph,
                 store: store.clone(),
@@ -1990,8 +1996,10 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 patch_hashes: materialize_patch_hashes,
                 node_version: node_version_for_prewarm.clone(),
                 build_policy: build_policy_for_prewarm.clone(),
+                force: opts.force,
             })
             .await?;
+            engines_virtual_store_plan = Some(materialize_virtual_store_plan.clone());
             let materialize_inputs = GvsPrewarmInputs {
                 graph: materialize_graph_arc.clone(),
                 store: store.clone(),
@@ -2450,6 +2458,11 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         engine_strict,
         virtual_store_dir_max_length,
         aube_util::embedder().self_engines_check,
+        &|dep_path, name| {
+            engines_virtual_store_plan.as_ref().and_then(|plan| {
+                plan.shared_package_dir(dep_path, name, virtual_store_dir_max_length)
+            })
+        },
     )?;
 
     // Emit policy-config warnings regardless of `--ignore-scripts`.
