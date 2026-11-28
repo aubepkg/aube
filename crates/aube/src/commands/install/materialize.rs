@@ -41,6 +41,12 @@ pub(super) enum VirtualStorePlan {
         virtual_store: std::path::PathBuf,
         hashes: std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>,
         project_local: std::sync::Arc<std::collections::BTreeSet<String>>,
+        /// Whether fetch may treat an already materialized shared entry
+        /// as current. Off under `--force`, which rebuilds every entry
+        /// this install did not place itself, and under the hoisted
+        /// linker, which doesn't link from shared entries.
+        trust_shared_entries: bool,
+        require_shared_manifest: bool,
     },
     /// `.aube/<dep_path>` entries are per-project directories keyed by
     /// dep_path alone. Only unchanged subtrees survive the link phase's
@@ -57,28 +63,60 @@ impl VirtualStorePlan {
     /// store (the stored target must be the subdir this graph expects
     /// *and* still exist) and the plain existence check the per-project
     /// materializer uses, provided subtree invalidation will preserve it.
+    /// Under the global virtual store a shared entry that is already
+    /// materialized also counts, even with no local link yet, because
+    /// the linker reuses it without an index (`virtual_store_hit`).
     pub(super) fn entry_is_current(
         &self,
         entry: &std::path::Path,
         dep_path: &str,
+        pkg_name: &str,
         virtual_store_dir_max_length: usize,
+        allow_shared_only: bool,
     ) -> bool {
         match self {
             Self::Global {
                 virtual_store,
                 hashes,
+                trust_shared_entries,
+                require_shared_manifest,
                 ..
             } => {
                 let expected = virtual_store.join(dep_path_to_filename(
                     &hashes.hashed_dep_path(dep_path),
                     virtual_store_dir_max_length,
                 ));
+                // Link step 1 reuses a shared entry that is already
+                // materialized without a `PackageIndex`, whatever state
+                // the local `.aube/<dep_path>` link is in (`virtual_store_hit`),
+                // and an entry only appears there through an atomic
+                // rename, so it is complete. That covers the warm repeat
+                // install, where `node_modules` was deleted but the
+                // global virtual store still holds every package.
+                let shared_package_exists = || {
+                    let package = expected.join("node_modules").join(pkg_name);
+                    if *require_shared_manifest {
+                        // Preserve index metadata for packages without a
+                        // manifest so strict checks can distinguish them
+                        // from a shared entry that disappears later.
+                        package.join("package.json").is_file()
+                    } else {
+                        package.exists()
+                    }
+                };
+                if *trust_shared_entries && allow_shared_only {
+                    return shared_package_exists();
+                }
                 // `read_link` then `exists`: the link has to name the
                 // target this graph expects, and that target has to be
                 // there. `exists` follows the link, so a dangling entry
                 // is a miss.
                 matches!(std::fs::read_link(entry), Ok(target) if target == expected)
-                    && entry.exists()
+                    && if *require_shared_manifest {
+                        shared_package_exists()
+                    } else {
+                        entry.exists()
+                    }
             }
             Self::PerProject { reusable } => reusable.contains(dep_path) && entry.exists(),
         }
@@ -90,6 +128,37 @@ impl VirtualStorePlan {
         match self {
             Self::Global { project_local, .. } => Some(project_local),
             Self::PerProject { .. } => None,
+        }
+    }
+
+    /// Where the global virtual store keeps `dep_path`'s package
+    /// directory under this graph's hashes. `None` in per-project mode
+    /// and for packages kept project-local. Lets a reader that runs
+    /// before linking (the engines check) find a package the fetch phase
+    /// skipped because its shared entry already exists, while the local
+    /// `.aube/<dep_path>` link is still missing.
+    pub(super) fn shared_package_dir(
+        &self,
+        dep_path: &str,
+        pkg_name: &str,
+        virtual_store_dir_max_length: usize,
+    ) -> Option<std::path::PathBuf> {
+        match self {
+            Self::Global {
+                virtual_store,
+                hashes,
+                project_local,
+                ..
+            } if !project_local.contains(dep_path) => Some(
+                virtual_store
+                    .join(dep_path_to_filename(
+                        &hashes.hashed_dep_path(dep_path),
+                        virtual_store_dir_max_length,
+                    ))
+                    .join("node_modules")
+                    .join(pkg_name),
+            ),
+            _ => None,
         }
     }
 
@@ -120,6 +189,13 @@ pub(super) struct VirtualStorePlanInputs<'a> {
     pub patch_hashes: std::collections::BTreeMap<String, String>,
     pub node_version: Option<String>,
     pub build_policy: std::sync::Arc<aube_scripts::BuildPolicy>,
+    /// Let fetch skip a package whose shared entry is already
+    /// materialized (see [`VirtualStorePlan::entry_is_current`]). Only
+    /// the isolated linker links from shared entries; the hoisted linker
+    /// copies from the store's own index and files, which fetch still
+    /// has to verify. `--force` turns it off too.
+    pub trust_shared_entries: bool,
+    pub require_shared_manifest: bool,
 }
 
 /// Decide the virtual-store layout and, under the global virtual
@@ -146,6 +222,8 @@ pub(super) async fn plan_virtual_store(
         patch_hashes,
         node_version,
         build_policy,
+        trust_shared_entries,
+        require_shared_manifest,
     } = inputs;
 
     // Probe linker built exactly the way the prewarm and link phases
@@ -225,6 +303,8 @@ pub(super) async fn plan_virtual_store(
         virtual_store,
         hashes: std::sync::Arc::new(hashes),
         project_local: std::sync::Arc::new(project_local),
+        trust_shared_entries,
+        require_shared_manifest,
     })
 }
 
@@ -341,6 +421,15 @@ pub(super) async fn run_gvs_prewarm_materializer(
         .await;
     };
 
+    let linker_hashes = graph_hashes_arc.clone();
+    let linker_task = tokio::task::spawn_blocking(move || {
+        let mut linker = probe.with_graph_hashes((*linker_hashes).clone());
+        if !patches.is_empty() {
+            linker = linker.with_patches(patches);
+        }
+        std::sync::Arc::new(linker)
+    });
+
     let nested_link_targets =
         aube_linker::build_workspace_nested_link_targets(&cwd, &graph, &workspace_dirs)
             .map(std::sync::Arc::new);
@@ -384,16 +473,15 @@ pub(super) async fn run_gvs_prewarm_materializer(
         .cloned()
         .unwrap_or_default();
 
+    let linker = linker_task
+        .await
+        .into_diagnostic()
+        .wrap_err("prewarm linker setup failed")?;
     aube_util::diag::instant(
         aube_util::diag::Category::Materialize,
         "drain_rx_begin",
         None,
     );
-    let mut linker = probe.with_graph_hashes((*graph_hashes_arc).clone());
-    if !patches.is_empty() {
-        linker = linker.with_patches(patches);
-    }
-    let linker = std::sync::Arc::new(linker);
 
     /*
      * Adaptive linker parallelism. The signal is the same as the

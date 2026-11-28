@@ -627,6 +627,24 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
 
     let use_global_virtual_store_override =
         gvs::resolve_global_virtual_store_override(&settings_ctx, &manifests, &opts.env_snapshot);
+    let engine_strict = aube_settings::resolved::engine_strict(&settings_ctx);
+    // Fetch may skip packages whose shared virtual-store entry already
+    // exists only when the isolated linker will link from those entries.
+    // The hoisted linker copies from the store's index and files, so
+    // fetch keeps verifying them; `--force` rebuilds everything.
+    let trust_shared_entries_setting = !opts.force && {
+        let cli = aube_settings::values::string_from_cli("nodeLinker", settings_ctx.cli);
+        match cli.as_deref() {
+            Some(cli) => matches!(
+                cli.trim().parse::<aube_linker::NodeLinker>(),
+                Ok(aube_linker::NodeLinker::Isolated)
+            ),
+            None => matches!(
+                aube_settings::resolved::node_linker(&settings_ctx),
+                aube_settings::resolved::NodeLinker::Isolated
+            ),
+        }
+    };
 
     // Remember which lockfile format the project currently uses so
     // every downstream write site (the `--lockfile-only` short-circuit
@@ -953,6 +971,10 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         Vec<String>,
     )>;
     let prewarm_project_local_dep_paths;
+    // The virtual-store plan the fetch phase used. The engines check
+    // reads package manifests from the shared entries it points at for
+    // packages fetch skipped without loading an index.
+    let engines_virtual_store_plan: Option<materialize::VirtualStorePlan>;
     // The cold-install lockfile write runs on a `spawn_blocking` task so it
     // overlaps `filter_graph` + the link phase (see
     // `lockfile_write_overlap`). The handle escapes the resolve match arm
@@ -1153,10 +1175,13 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 patch_hashes: lock_patch_hashes,
                 node_version: lock_node_version,
                 build_policy: lock_build_policy,
+                trust_shared_entries: trust_shared_entries_setting,
+                require_shared_manifest: engine_strict,
             })
             .await?;
             prewarm_project_local_dep_paths =
                 lock_virtual_store_plan.project_local_dep_paths().cloned();
+            engines_virtual_store_plan = Some(lock_virtual_store_plan.clone());
             let lock_prewarm_inputs = GvsPrewarmInputs {
                 graph: lock_materialize_graph,
                 store: store.clone(),
@@ -2012,8 +2037,11 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 patch_hashes: materialize_patch_hashes,
                 node_version: node_version_for_prewarm.clone(),
                 build_policy: build_policy_for_prewarm.clone(),
+                trust_shared_entries: trust_shared_entries_setting,
+                require_shared_manifest: engine_strict,
             })
             .await?;
+            engines_virtual_store_plan = Some(materialize_virtual_store_plan.clone());
             let materialize_inputs = GvsPrewarmInputs {
                 graph: materialize_graph_arc.clone(),
                 store: store.clone(),
@@ -2451,7 +2479,6 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
     //     All three go through the `settings_ctx` loaded once at the
     //     top of `run`, so there's a single `.npmrc` read and a
     //     single workspace-yaml parse for the whole install.
-    let engine_strict = aube_settings::resolved::engine_strict(&settings_ctx);
     // `childConcurrency` caps how many dep lifecycle scripts run in
     // parallel during the post-link allowBuilds phase. Matches pnpm's
     // default of 5 when unset. Zero gets clamped up to 1 inside
@@ -2468,10 +2495,16 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         &manifests,
         &graph_for_link,
         &package_indices,
+        &store,
         node_version.as_deref(),
         engine_strict,
         virtual_store_dir_max_length,
         aube_util::embedder().self_engines_check,
+        &|dep_path, name| {
+            engines_virtual_store_plan.as_ref().and_then(|plan| {
+                plan.shared_package_dir(dep_path, name, virtual_store_dir_max_length)
+            })
+        },
     )?;
 
     // Emit policy-config warnings regardless of `--ignore-scripts`.

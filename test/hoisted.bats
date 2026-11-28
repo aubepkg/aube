@@ -58,6 +58,25 @@ teardown() {
 	assert_failure
 }
 
+@test "hoisted install restores a removed store index when the global virtual store is warm" {
+	_setup_basic_fixture
+	# An isolated install fills the global virtual store.
+	run aube install
+	assert_success
+	run aube store path
+	assert_success
+	local store="$output"
+	rm -rf node_modules "$store/index"
+	# The hoisted linker copies from the store's own index and files, so
+	# fetch still has to restore the index instead of trusting the warm
+	# shared entries.
+	run aube install --node-linker=hoisted
+	assert_success
+	assert_file_exists node_modules/is-odd/package.json
+	run test -L node_modules/is-odd
+	assert_failure
+}
+
 @test "hoisted require() resolves through Node's upward walk" {
 	_setup_basic_fixture
 	run aube install --node-linker=hoisted

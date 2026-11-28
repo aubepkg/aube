@@ -1,5 +1,6 @@
 use tracing::trace;
 
+use crate::materialize::VirtualStoreLookup;
 use crate::patches::{
     applied_patches_sidecar_name, current_patch_hashes, read_applied_patches,
     wipe_changed_patched_entries, write_applied_patches,
@@ -8,7 +9,7 @@ use crate::pool::with_link_pool;
 use crate::sweep::{
     EntryState, classify_entry_state, classify_local_entry_state, create_dir_link_idempotent,
     is_physical_importer, mkdirp, reconcile_dir_link, remove_hidden_hoist_tree,
-    sweep_abandoned_hoist_staging, sweep_dead_hidden_hoist_entries,
+    sweep_abandoned_hoist_staging, sweep_dead_hidden_hoist_entries, sweep_dead_hidden_hoist_entry,
     sweep_stale_hidden_hoist_entries, sweep_stale_tmp_dirs, sweep_stale_top_level_entries,
     try_remove_entry,
 };
@@ -320,8 +321,21 @@ impl Linker {
             // so the install state can record them without reading every
             // link back from disk. Windows reads its junction targets from
             // disk and skips this.
-            type Step1Result<'g> =
-                Result<(LinkStats, Option<(&'g String, Vec<(String, PathBuf)>)>), Error>;
+            //
+            // The local links themselves are created after the parallel
+            // pass, not inside it: they all land in `aube_dir`, and on
+            // Linux concurrent creates in one directory, interleaved with
+            // the lookups that classify its entries, contend on the
+            // directory lock badly enough to run slower than creating
+            // them one after another.
+            type Step1Result<'g> = Result<
+                (
+                    LinkStats,
+                    Option<(&'g String, Vec<(String, PathBuf)>)>,
+                    Option<(&'g String, PendingLocalLink)>,
+                ),
+                Error,
+            >;
             let step1_results: Vec<Step1Result<'_>> = with_link_pool(link_parallelism, || {
                 step1_prep
                     .par_iter()
@@ -355,7 +369,7 @@ impl Linker {
                                     pkg,
                                     nested_link_targets.as_ref(),
                                 )?;
-                                return Ok((local_stats, None));
+                                return Ok((local_stats, None, None));
                             }
                             let reconciled = self.reconcile_virtual_store_entry(
                                 dep_path,
@@ -368,101 +382,134 @@ impl Linker {
                                 recordable_dep_link_targets(reconciled)
                                     .map(|targets| (key, targets))
                             };
-                            return Ok((local_stats, targets));
+                            return Ok((local_stats, targets, None));
                         }
 
-                        // Symlink is stale or missing — need the package
-                        // index to (re)materialize. The install driver
-                        // omits `package_indices` entries for packages on
-                        // the fast path; load from the store on demand if
-                        // this one slipped through. This keeps the
-                        // fast-path safe against graph-hash changes that
-                        // invalidate the symlink target (patches, engine
-                        // bumps, `allowBuilds` flips).
-                        let owned_index;
-                        let index = match package_indices.get(dep_path) {
-                            Some(idx) => idx,
-                            None => {
-                                owned_index = self
-                                    .store
-                                    .load_index(
-                                        pkg.registry_name(),
-                                        &pkg.version,
-                                        pkg.integrity.as_deref(),
-                                    )
-                                    .ok_or_else(|| {
-                                        Error::MissingPackageIndex(dep_path.to_string())
-                                    })?;
-                                &owned_index
-                            }
-                        };
-                        if project_local {
-                            if !matches!(state, EntryState::Missing) {
-                                try_remove_entry(&local_aube_entry);
-                            }
-                            self.materialize_at(
-                                &aube_dir.join(self.aube_dir_entry_name(dep_path)),
-                                &aube_dir,
+                        // Symlink is stale or missing. A shared entry that
+                        // is already materialized only needs the local
+                        // link, so check for it before touching the store:
+                        // a fresh `node_modules` over a warm global virtual
+                        // store then reads no package index at all.
+                        let lookup = if project_local {
+                            VirtualStoreLookup::Miss
+                        } else {
+                            self.virtual_store_hit(
                                 dep_path,
+                                subdir,
+                                pkg,
+                                &mut local_stats,
+                                nested_link_targets.as_ref(),
+                            )?
+                        };
+                        let lookup_hit = lookup.is_hit();
+                        let reconciled_targets = match lookup {
+                            VirtualStoreLookup::Hit { reconciled_targets } => reconciled_targets,
+                            VirtualStoreLookup::Miss => None,
+                        };
+                        if !lookup_hit {
+                            // Need the package index to (re)materialize.
+                            // The install driver omits `package_indices`
+                            // entries for packages on the fast path; load
+                            // from the store on demand if this one slipped
+                            // through. This keeps the fast-path safe
+                            // against graph-hash changes that invalidate
+                            // the symlink target (patches, engine bumps,
+                            // `allowBuilds` flips).
+                            let owned_index;
+                            let index = match package_indices.get(dep_path) {
+                                Some(idx) => idx,
+                                None => {
+                                    owned_index = self
+                                        .store
+                                        .load_index(
+                                            pkg.registry_name(),
+                                            &pkg.version,
+                                            pkg.integrity.as_deref(),
+                                        )
+                                        .ok_or_else(|| {
+                                            Error::MissingPackageIndex(dep_path.to_string())
+                                        })?;
+                                    &owned_index
+                                }
+                            };
+                            if project_local {
+                                if !matches!(state, EntryState::Missing) {
+                                    try_remove_entry(&local_aube_entry);
+                                }
+                                self.materialize_at(
+                                    &aube_dir.join(self.aube_dir_entry_name(dep_path)),
+                                    &aube_dir,
+                                    dep_path,
+                                    pkg,
+                                    index,
+                                    &mut local_stats,
+                                    false,
+                                    nested_link_targets.as_ref(),
+                                )?;
+                                return Ok((local_stats, None, None));
+                            }
+
+                            self.materialize_into_virtual_store(
+                                dep_path,
+                                subdir,
                                 pkg,
                                 index,
                                 &mut local_stats,
-                                false,
                                 nested_link_targets.as_ref(),
                             )?;
-                            return Ok((local_stats, None));
                         }
-
-                        self.ensure_in_virtual_store_with_subdir(
-                            dep_path,
-                            subdir,
-                            pkg,
-                            index,
-                            &mut local_stats,
-                            nested_link_targets.as_ref(),
-                        )?;
 
                         // Only pay the removal syscalls when we actually
-                        // have something to remove. Besides a stale link
-                        // (an NTFS junction on Windows), the entry can be a
-                        // real directory: a copy of the project that
-                        // followed its links (Windows Explorer, `cp -rL`)
-                        // leaves one, and creating the link over it fails
-                        // with EEXIST. `try_remove_entry` clears every
-                        // shape without following links, as
-                        // `materialize.rs` already does.
-                        if matches!(state, EntryState::Stale) {
-                            try_remove_entry(&local_aube_entry);
-                        }
-                        // Parent dirs were pre-created above the
-                        // par_iter; no per-package `mkdirp` here.
-                        sys::create_dir_link(&global_entry, &local_aube_entry)
-                            .map_err(|e| Error::Io(local_aube_entry.clone(), e))?;
+                        // have something to remove; the link itself is
+                        // created after this pass.
+                        let pending = PendingLocalLink {
+                            target: global_entry,
+                            link: local_aube_entry,
+                            stale: matches!(state, EntryState::Stale),
+                        };
                         let targets = if cfg!(windows) {
                             None
                         } else {
-                            recordable_dep_link_targets(self.virtual_store_dep_link_targets(
-                                dep_path,
-                                pkg,
-                                nested_link_targets.as_ref(),
-                            )?)
-                            .map(|targets| (key, targets))
+                            let targets = match reconciled_targets {
+                                Some(targets) => targets,
+                                None => self.virtual_store_dep_link_targets(
+                                    dep_path,
+                                    pkg,
+                                    nested_link_targets.as_ref(),
+                                )?,
+                            };
+                            recordable_dep_link_targets(targets).map(|targets| (key, targets))
                         };
-                        Ok((local_stats, targets))
+                        Ok((local_stats, targets, Some((key, pending))))
                     })
                     .collect()
             });
 
             let mut dep_link_targets = BTreeMap::new();
+            let mut pending_links = Vec::new();
+            let mut linked_entries = rustc_hash::FxHashSet::default();
             for result in step1_results {
-                let (local_stats, targets) = result?;
+                let (local_stats, targets, pending) = result?;
                 stats.packages_linked += local_stats.packages_linked;
                 stats.packages_cached += local_stats.packages_cached;
                 stats.files_linked += local_stats.files_linked;
                 if let Some((dep_path, targets)) = targets {
                     dep_link_targets.insert(dep_path.clone(), targets);
                 }
+                if let Some((dep_path, pending)) = pending {
+                    linked_entries.insert(dep_path.clone());
+                    pending_links.push(pending);
+                }
             }
+            create_pending_local_links(&pending_links, link_parallelism)?;
+            // Each link created above points at a shared entry whose
+            // package directory step 1 just confirmed or placed. (A fresh
+            // link is left out: only the link itself was checked.)
+            *self
+                .linked_aube_entries
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                Some((aube_dir.to_path_buf(), linked_entries));
             // Windows junctions store normalized absolute targets that
             // don't compare equal to the computed ones; read them from disk.
             if cfg!(not(windows)) {
@@ -1074,48 +1121,62 @@ impl Linker {
                                 return Ok(local_stats);
                             }
 
-                            let owned_index;
-                            let index = match package_indices.get(dep_path) {
-                                Some(idx) => idx,
-                                None => {
-                                    owned_index = self
-                                        .store
-                                        .load_index(
-                                            pkg.registry_name(),
-                                            &pkg.version,
-                                            pkg.integrity.as_deref(),
-                                        )
-                                        .ok_or_else(|| {
-                                            Error::MissingPackageIndex(dep_path.to_string())
-                                        })?;
-                                    &owned_index
+                            // See the `link_all` counterpart: a shared entry
+                            // that is already materialized needs no index.
+                            let hit = !project_local
+                                && self
+                                    .virtual_store_hit(
+                                        dep_path,
+                                        subdir,
+                                        pkg,
+                                        &mut local_stats,
+                                        nested_link_targets.as_ref(),
+                                    )?
+                                    .is_hit();
+                            if !hit {
+                                let owned_index;
+                                let index = match package_indices.get(dep_path) {
+                                    Some(idx) => idx,
+                                    None => {
+                                        owned_index = self
+                                            .store
+                                            .load_index(
+                                                pkg.registry_name(),
+                                                &pkg.version,
+                                                pkg.integrity.as_deref(),
+                                            )
+                                            .ok_or_else(|| {
+                                                Error::MissingPackageIndex(dep_path.to_string())
+                                            })?;
+                                        &owned_index
+                                    }
+                                };
+                                if project_local {
+                                    if !matches!(state, EntryState::Missing) {
+                                        try_remove_entry(&local_aube_entry);
+                                    }
+                                    self.materialize_at(
+                                        &aube_dir.join(self.aube_dir_entry_name(dep_path)),
+                                        &aube_dir,
+                                        dep_path,
+                                        pkg,
+                                        index,
+                                        &mut local_stats,
+                                        false,
+                                        nested_link_targets.as_ref(),
+                                    )?;
+                                    return Ok(local_stats);
                                 }
-                            };
-                            if project_local {
-                                if !matches!(state, EntryState::Missing) {
-                                    try_remove_entry(&local_aube_entry);
-                                }
-                                self.materialize_at(
-                                    &aube_dir.join(self.aube_dir_entry_name(dep_path)),
-                                    &aube_dir,
+
+                                self.materialize_into_virtual_store(
                                     dep_path,
+                                    subdir,
                                     pkg,
                                     index,
                                     &mut local_stats,
-                                    false,
                                     nested_link_targets.as_ref(),
                                 )?;
-                                return Ok(local_stats);
                             }
-
-                            self.ensure_in_virtual_store_with_subdir(
-                                dep_path,
-                                subdir,
-                                pkg,
-                                index,
-                                &mut local_stats,
-                                nested_link_targets.as_ref(),
-                            )?;
 
                             // A real directory is possible here too; see
                             // the `link_all` counterpart.
@@ -1575,10 +1636,17 @@ impl Linker {
         // parent walk would find nothing there for the root deps.
         let reserve_root_deps =
             !self.virtual_store_only && root_links_reachable_from(aube_dir, root_nm);
-        self.link_hidden_hoist_at(aube_dir, aube_dir, graph, false, true, reserve_root_deps)?;
-        if self.use_global_virtual_store {
-            // The GVS mirror lives outside the project, so its packages
-            // never reach the root links and keep the root deps eligible.
+        let project =
+            || self.link_hidden_hoist_at(aube_dir, aube_dir, graph, false, true, reserve_root_deps);
+        if !self.use_global_virtual_store {
+            return project();
+        }
+        // The GVS mirror lives outside the project, so its packages
+        // never reach the root links and keep the root deps eligible.
+        // The two trees share nothing on disk, so build them side by
+        // side: on a warm install each pass is mostly syscall latency
+        // (the shared one also sweeps every other project's entries).
+        let shared = || {
             self.link_hidden_hoist_at(
                 &self.virtual_store,
                 &self.virtual_store,
@@ -1586,9 +1654,11 @@ impl Linker {
                 true,
                 false,
                 false,
-            )?;
-        }
-        Ok(())
+            )
+        };
+        let (project_res, shared_res) = rayon::join(project, shared);
+        project_res?;
+        shared_res
     }
 
     fn link_hidden_hoist_at(
@@ -1648,7 +1718,7 @@ impl Linker {
             if sweep_stale_entries {
                 remove_hidden_hoist_tree(&hidden);
             } else {
-                sweep_dead_hidden_hoist_entries(&hidden);
+                sweep_dead_hidden_hoist_entries(&hidden, &rustc_hash::FxHashSet::default());
             }
             return Ok(());
         }
@@ -1656,12 +1726,15 @@ impl Linker {
         // graph while keeping correctly targeted links. The shared GVS
         // hidden hoist only prunes broken entries: removing live links
         // there would disrupt another project.
+        // A project tree that isn't there yet holds no links to check, so
+        // every entry below is known to be missing.
+        let hidden_was_absent = sweep_stale_entries && std::fs::symlink_metadata(&hidden).is_err();
+        let hoisted: rustc_hash::FxHashSet<&str> =
+            packages.iter().map(|(_, pkg)| pkg.name.as_str()).collect();
         if sweep_stale_entries {
-            let preserve: rustc_hash::FxHashSet<&str> =
-                packages.iter().map(|(_, pkg)| pkg.name.as_str()).collect();
-            sweep_stale_hidden_hoist_entries(&hidden, &preserve);
+            sweep_stale_hidden_hoist_entries(&hidden, &hoisted);
         } else {
-            sweep_dead_hidden_hoist_entries(&hidden);
+            sweep_dead_hidden_hoist_entries(&hidden, &hoisted);
             sweep_abandoned_hoist_staging(&hidden);
         }
         if packages.is_empty() {
@@ -1716,108 +1789,181 @@ impl Linker {
             }
         }
         use rayon::prelude::*;
-        let link_one = |(dep_path, pkg): &&(&String, &LockedPackage)| -> Result<(), Error> {
-            let source_subdir = if use_hashed_subdirs {
-                self.virtual_store_subdir(dep_path)
-            } else {
-                self.aube_dir_entry_name(dep_path)
+        // Where `pkg` is hoisted to and the link text that points at its
+        // source, or `None` when its source isn't materialized.
+        // Only the pass over the `.aube` dir step 1 just populated may
+        // trust its record; taking it keeps a later link from reusing it.
+        let linked_aube_entries = if use_hashed_subdirs {
+            None
+        } else {
+            self.linked_aube_entries
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take()
+                .filter(|(dir, _)| dir == source_root)
+                .map(|(_, entries)| entries)
+        }
+        .unwrap_or_default();
+        let plan_one =
+            |(dep_path, pkg): &&(&String, &LockedPackage)| -> (PathBuf, Option<PathBuf>) {
+                let source_subdir = if use_hashed_subdirs {
+                    self.virtual_store_subdir(dep_path)
+                } else {
+                    self.aube_dir_entry_name(dep_path)
+                };
+                let source_dir = source_root
+                    .join(source_subdir)
+                    .join("node_modules")
+                    .join(&pkg.name);
+                let target_dir = hidden.join(&pkg.name);
+                let source_linked = linked_aube_entries.contains(dep_path.as_str());
+                if !source_linked && !source_dir.exists() {
+                    return (target_dir, None);
+                }
+                let link_parent = target_dir.parent().unwrap_or(&hidden);
+                let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
+                    .unwrap_or_else(|| source_dir.clone());
+                (target_dir, Some(rel_target))
             };
-            let source_dir = source_root
-                .join(source_subdir)
-                .join("node_modules")
-                .join(&pkg.name);
-            let target_dir = hidden.join(&pkg.name);
-            if !source_dir.exists() {
-                if sweep_stale_entries {
+        let shared = !sweep_stale_entries;
+        // Make `target_dir` a link to `rel_target`. `known_missing` skips
+        // the first reconcile for a link this pass already found absent.
+        let ensure_link =
+            |target_dir: &Path, rel_target: &Path, mut known_missing: bool| -> Result<(), Error> {
+                let link_parent = target_dir.parent().unwrap_or(&hidden);
+                // The shared GVS mirror can be linked by other processes at
+                // the same time. A missing link may appear between reconcile
+                // and create (`AlreadyExists`), so re-reconcile: an identical
+                // winner is kept, a different one is replaced. Links there
+                // are published whole (see `create_dir_link_published`) so a
+                // peer never mistakes a half-built Windows junction for junk,
+                // and a peer's in-flight removal (delete-pending, sharing
+                // violation) is retried. Bounded so two projects that keep
+                // flipping one name still terminate.
+                let mut attempts = 0u64;
+                loop {
+                    let reconciled = if std::mem::take(&mut known_missing) {
+                        Ok(false)
+                    } else {
+                        reconcile_dir_link(target_dir, rel_target)
+                    };
+                    let created = match reconciled {
+                        Ok(true) => return Ok(()),
+                        Ok(false) if shared => {
+                            let staging = hidden.join(format!(
+                                ".tmp-{}-hoist-{}",
+                                std::process::id(),
+                                HOIST_STAGING_SEQ
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            ));
+                            sys::create_dir_link_published(rel_target, target_dir, &staging)
+                        }
+                        Ok(false) => sys::create_dir_link(rel_target, target_dir),
+                        Err(Error::Io(_, e)) if shared => Err(e),
+                        Err(e) => return Err(e),
+                    };
+                    match created {
+                        Ok(()) => return Ok(()),
+                        Err(e)
+                            if attempts < 8
+                                && if shared {
+                                    sys::is_transient_shared_link_error(&e)
+                                } else {
+                                    e.kind() == std::io::ErrorKind::AlreadyExists
+                                } =>
+                        {
+                            attempts += 1;
+                            // A peer's sweep drops an `@scope/` dir the
+                            // moment it looks empty, which can be after this
+                            // pass created it. Recreating it can itself hit a
+                            // delete-pending dir, so a failure only costs this
+                            // attempt; the loop still surfaces the link error.
+                            let parent_restored = e.kind() == std::io::ErrorKind::NotFound
+                                && match mkdirp(link_parent) {
+                                    Ok(()) => true,
+                                    Err(err) => {
+                                        tracing::debug!(
+                                            "hidden-hoist: recreate {}: {err}",
+                                            link_parent.display()
+                                        );
+                                        false
+                                    }
+                                };
+                            if !parent_restored && e.kind() != std::io::ErrorKind::AlreadyExists {
+                                // Delete-pending entries clear once the
+                                // peer closes its handle; give it a moment.
+                                std::thread::sleep(std::time::Duration::from_millis(5 * attempts));
+                            }
+                        }
+                        Err(e) => return Err(Error::Io(target_dir.to_path_buf(), e)),
+                    }
+                }
+            };
+        let publish_one =
+            |target_dir: &Path, rel_target: Option<&Path>, name: &str, known_missing| {
+                if let Some(rel_target) = rel_target {
+                    ensure_link(target_dir, rel_target, known_missing)?;
+                    trace!("hidden-hoist: {}", target_dir.display());
+                } else if shared {
+                    // The sweep above left this name to us.
+                    sweep_dead_hidden_hoist_entry(target_dir);
+                } else {
                     let points_to_live_collision =
                         target_dir.canonicalize().ok().is_some_and(|target| {
                             valid_collision_sources
-                                .get(&pkg.name.to_lowercase())
+                                .get(&name.to_lowercase())
                                 .is_some_and(|targets| targets.contains(&target))
                         });
                     if !points_to_live_collision {
-                        try_remove_entry(&target_dir);
+                        try_remove_entry(target_dir);
                     }
                 }
-                return Ok(());
-            }
-            let link_parent = target_dir.parent().unwrap_or(&hidden);
-            let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
-                .unwrap_or_else(|| source_dir.clone());
-            // The shared GVS mirror can be linked by other processes at
-            // the same time. A missing link may appear between reconcile
-            // and create (`AlreadyExists`), so re-reconcile: an identical
-            // winner is kept, a different one is replaced. Links there
-            // are published whole (see `create_dir_link_published`) so a
-            // peer never mistakes a half-built Windows junction for junk,
-            // and a peer's in-flight removal (delete-pending, sharing
-            // violation) is retried. Bounded so two projects that keep
-            // flipping one name still terminate.
-            let shared = !sweep_stale_entries;
-            let mut attempts = 0u64;
-            loop {
-                let created = match reconcile_dir_link(&target_dir, &rel_target) {
-                    Ok(true) => return Ok(()),
-                    Ok(false) if shared => {
-                        let staging = hidden.join(format!(
-                            ".tmp-{}-hoist-{}",
-                            std::process::id(),
-                            HOIST_STAGING_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                        ));
-                        sys::create_dir_link_published(&rel_target, &target_dir, &staging)
-                    }
-                    Ok(false) => sys::create_dir_link(&rel_target, &target_dir),
-                    Err(Error::Io(_, e)) if shared => Err(e),
-                    Err(e) => return Err(e),
-                };
-                match created {
-                    Ok(()) => break,
-                    Err(e)
-                        if attempts < 8
-                            && if shared {
-                                sys::is_transient_shared_link_error(&e)
-                            } else {
-                                e.kind() == std::io::ErrorKind::AlreadyExists
-                            } =>
-                    {
-                        attempts += 1;
-                        // A peer's sweep drops an `@scope/` dir the
-                        // moment it looks empty, which can be after this
-                        // pass created it. Recreating it can itself hit a
-                        // delete-pending dir, so a failure only costs this
-                        // attempt; the loop still surfaces the link error.
-                        let parent_restored = e.kind() == std::io::ErrorKind::NotFound
-                            && match mkdirp(link_parent) {
-                                Ok(()) => true,
-                                Err(err) => {
-                                    tracing::debug!(
-                                        "hidden-hoist: recreate {}: {err}",
-                                        link_parent.display()
-                                    );
-                                    false
-                                }
-                            };
-                        if !parent_restored && e.kind() != std::io::ErrorKind::AlreadyExists {
-                            // Delete-pending entries clear once the
-                            // peer closes its handle; give it a moment.
-                            std::thread::sleep(std::time::Duration::from_millis(5 * attempts));
-                        }
-                    }
-                    Err(e) => return Err(Error::Io(target_dir.clone(), e)),
-                }
-            }
-            trace!("hidden-hoist: {}", pkg.name);
-            // Intentionally not counted in `stats.top_level_linked`.
-            // That counter reflects the user-visible root
-            // `node_modules/<name>` entries; hidden-hoist symlinks
-            // live under `.aube/node_modules/` and are only reached
-            // via Node's parent-directory walk from inside the
-            // virtual store, not from the user's own code.
-            Ok(())
+                Ok::<(), Error>(())
+            };
+        let link_one = |entry: &&(&String, &LockedPackage)| -> Result<(), Error> {
+            let (target_dir, rel_target) = plan_one(entry);
+            publish_one(&target_dir, rel_target.as_deref(), &entry.1.name, false)
         };
-        with_link_pool(self.link_parallelism(), || {
-            independent.par_iter().try_for_each(link_one)
-        })?;
+        // Intentionally not counted in `stats.top_level_linked`. That
+        // counter reflects the user-visible root `node_modules/<name>`
+        // entries; hidden-hoist symlinks live under `.aube/node_modules/`
+        // and are only reached via Node's parent-directory walk from
+        // inside the virtual store, not from the user's own code.
+        if shared || cfg!(windows) {
+            with_link_pool(self.link_parallelism(), || {
+                independent.par_iter().try_for_each(link_one)
+            })?;
+        } else {
+            // The project's own hidden hoist directory belongs to this
+            // install alone. Check every entry in parallel, then publish
+            // changes one at a time: links share a parent
+            // directory, where concurrent creates interleaved with those
+            // lookups contend on its lock (see `create_pending_local_links`).
+            let pending: Vec<_> = with_link_pool(self.link_parallelism(), || {
+                independent
+                    .par_iter()
+                    .filter_map(|entry| {
+                        let (target_dir, rel_target) = plan_one(entry);
+                        if hidden_was_absent {
+                            return rel_target
+                                .map(|target| (target_dir, Some(target), &entry.1.name, true));
+                        }
+                        let known_missing = match rel_target.as_ref() {
+                            Some(target) => match std::fs::read_link(&target_dir) {
+                                Ok(existing) if existing == *target => return None,
+                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                                _ => false,
+                            },
+                            None => false,
+                        };
+                        Some((target_dir, rel_target, &entry.1.name, known_missing))
+                    })
+                    .collect()
+            });
+            for (target_dir, rel_target, name, known_missing) in &pending {
+                publish_one(target_dir, rel_target.as_deref(), name, *known_missing)?;
+            }
+        }
         case_colliding.iter().try_for_each(link_one)
     }
 
@@ -2153,6 +2299,47 @@ fn recordable_dep_link_targets(targets: Vec<(String, PathBuf)>) -> Option<Vec<(S
         .iter()
         .all(|(_, target)| target.is_relative())
         .then_some(targets)
+}
+
+/// A `node_modules/.aube/<entry>` link that link step 1 decided to
+/// (re)create, pointing at its global virtual-store entry.
+struct PendingLocalLink {
+    target: PathBuf,
+    link: PathBuf,
+    /// Something other than the expected link is in the way and has to
+    /// be removed first.
+    stale: bool,
+}
+
+/// Create step 1's local links. Their parents were created before the
+/// parallel pass, so this only removes what is in the way and links.
+///
+/// On Unix the links are created one after another: they all share a
+/// parent directory, and concurrent creates there serialize on its lock
+/// and were measured slower than a plain loop on tmpfs, ext4 and
+/// overlayfs. Windows junctions cost far more per link, so they keep
+/// the link pool.
+fn create_pending_local_links(pending: &[PendingLocalLink], threads: usize) -> Result<(), Error> {
+    let create = |entry: &PendingLocalLink| -> Result<(), Error> {
+        // Besides a stale link (an NTFS junction on Windows), the entry
+        // can be a real directory: a copy of the project that followed
+        // its links (Windows Explorer, `cp -rL`) leaves one, and creating
+        // the link over it fails with EEXIST. `try_remove_entry` clears
+        // every shape without following links, as `materialize.rs`
+        // already does.
+        if entry.stale {
+            try_remove_entry(&entry.link);
+        }
+        sys::create_dir_link(&entry.target, &entry.link)
+            .map_err(|e| Error::Io(entry.link.clone(), e))
+    };
+    if cfg!(windows) {
+        use rayon::prelude::*;
+        with_link_pool(threads, || pending.par_iter().try_for_each(create))
+    } else {
+        let _ = threads;
+        pending.iter().try_for_each(create)
+    }
 }
 
 #[cfg(test)]
