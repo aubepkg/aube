@@ -958,11 +958,8 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
 
     // Captures the prewarm task's `compute_graph_hashes` output so the
     // link phase can reuse it instead of recomputing the same 4-pass
-    // BLAKE3 walk over `graph.packages`. Populated by the no-lockfile
-    // branch when the prewarm task uses GVS; left `None` on the
-    // frozen-lockfile path or when the prewarm short-circuits.
-    let mut prewarm_graph_hashes: Option<std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>> =
-        None;
+    // BLAKE3 walk over `graph.packages`.
+    let prewarm_graph_hashes;
     // Global virtual-store entries the prewarm placed itself, with the
     // hashes it named them under. The link phase trusts their dependency
     // links wherever its own hashes give the same name.
@@ -1152,14 +1149,18 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             let (lock_patches, lock_patch_hashes) =
                 crate::patches::load_patches_for_linker(&cwd, &graph.patched_dependencies)?;
             let (lock_materialize_tx, lock_materialize_rx) = materialize_channel();
-            let lock_materialize_graph = std::sync::Arc::new(filter_graph_for_install(
+            let graph = std::sync::Arc::new(graph);
+            let lock_materialize_graph = match filter_graph_for_install(
                 &cwd,
                 &workspace_packages,
                 &graph,
                 &opts,
                 has_workspace && !link_all_workspace_importers,
                 false,
-            )?);
+            )? {
+                std::borrow::Cow::Borrowed(_) => graph.clone(),
+                std::borrow::Cow::Owned(filtered) => std::sync::Arc::new(filtered),
+            };
             // Hoisted out of the prewarm task (where it used to run
             // concurrently with fetch) because the already-linked
             // shortcut below cannot classify an entry without it. The
@@ -1247,6 +1248,12 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             // Materializer stats roll into link via GVS-already-linked
             // fast path. Errors abort install.
             let prewarm = lock_materialize_handle.await.into_diagnostic()??;
+            // The locked graph is immutable after platform selection. Patches
+            // are reread before linking, so keep recomputing for patched graphs.
+            prewarm_graph_hashes = prewarm
+                .graph_hashes
+                .clone()
+                .filter(|_| graph.patched_dependencies.is_empty());
             prewarm_placed = prewarm.graph_hashes.map(|hashes| (hashes, prewarm.placed));
             tracing::debug!(
                 "phase:fetch {:.1?} ({fetched} packages)",
@@ -2012,14 +2019,17 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             // below hits pkg_nm_dir.exists() fast path and only writes
             // the per-project .aube/<dep_path> symlink.
             let materialize_phase_start = std::time::Instant::now();
-            let materialize_graph_arc = std::sync::Arc::new(filter_graph_for_install(
-                &cwd,
-                &workspace_packages,
-                &graph,
-                &opts,
-                has_workspace && !link_all_workspace_importers,
-                false,
-            )?);
+            let materialize_graph_arc = std::sync::Arc::new(
+                filter_graph_for_install(
+                    &cwd,
+                    &workspace_packages,
+                    &graph,
+                    &opts,
+                    has_workspace && !link_all_workspace_importers,
+                    false,
+                )?
+                .into_owned(),
+            );
             let materialize_strategy = resolve_link_strategy(&cwd, &settings_ctx, planned_gvs)?;
             let (materialize_patches, materialize_patch_hashes) =
                 crate::patches::load_patches_for_linker(&cwd, &graph.patched_dependencies)?;
@@ -2402,7 +2412,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 phase_timings.record("catchup_fetch", catchup_start.elapsed());
             }
 
-            (graph, indices, cached, fetched)
+            (std::sync::Arc::new(graph), indices, cached, fetched)
         }
         Err(aube_lockfile::Error::NotFound(_)) => {
             // Reachable when mode == Frozen, strict_no_lockfile == true,
@@ -2618,14 +2628,16 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
     Ok(())
 }
 
-fn filter_graph_for_install(
+fn filter_graph_for_install<'g>(
     cwd: &std::path::Path,
     workspace_packages: &[std::path::PathBuf],
-    graph: &aube_lockfile::LockfileGraph,
+    graph: &'g aube_lockfile::LockfileGraph,
     opts: &InstallOptions,
     filter_to_root_importer: bool,
     log_dropped_packages: bool,
-) -> miette::Result<aube_lockfile::LockfileGraph> {
+) -> miette::Result<std::borrow::Cow<'g, aube_lockfile::LockfileGraph>> {
+    use std::borrow::Cow;
+
     let mut filtered = if opts.dep_selection.is_filtered() {
         let sel = opts.dep_selection;
         let selected = graph.filter_deps(|d| {
@@ -2644,20 +2656,20 @@ fn filter_graph_for_install(
         if log_dropped_packages && dropped > 0 {
             tracing::debug!("{}: skipping {dropped} packages", sel.label());
         }
-        selected
+        Cow::Owned(selected)
     } else {
-        graph.clone()
+        Cow::Borrowed(graph)
     };
 
     if !opts.workspace_filter.is_empty() {
-        filtered = filter_graph_to_workspace_selection(
+        filtered = Cow::Owned(filter_graph_to_workspace_selection(
             cwd,
             workspace_packages,
             &filtered,
             &opts.workspace_filter,
-        )?;
+        )?);
     } else if filter_to_root_importer {
-        filtered = filter_graph_to_importers(&filtered, ["."]);
+        filtered = Cow::Owned(filter_graph_to_importers(&filtered, ["."]));
     }
 
     Ok(filtered)
