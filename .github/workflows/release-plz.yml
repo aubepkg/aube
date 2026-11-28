@@ -232,6 +232,14 @@ jobs:
           }
           trap restore_original_body ERR
           previous_tag="$(git describe --tags --abbrev=0 "${TAG}^")"
+          # communique writes the review report before it updates the release,
+          # so add the report to the summary even when that update fails.
+          append_coverage() {
+            if [[ -f "$RUNNER_TEMP/communique-coverage.md" ]]; then
+              cat "$RUNNER_TEMP/communique-coverage.md" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+          trap append_coverage EXIT
           communique generate "$TAG" "$previous_tag" --github-release \
             --review-report "$RUNNER_TEMP/communique-coverage.md"
           body="$(gh release view "$TAG" --json body --jq .body)"
@@ -244,9 +252,6 @@ jobs:
             exit 1
           fi
           trap - ERR
-          if [[ -f "$RUNNER_TEMP/communique-coverage.md" ]]; then
-            cat "$RUNNER_TEMP/communique-coverage.md" >> "$GITHUB_STEP_SUMMARY"
-          fi
       - name: Append jdx.dev sponsor blurb
         env:
           GITHUB_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
