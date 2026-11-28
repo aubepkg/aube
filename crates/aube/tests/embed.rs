@@ -602,6 +602,7 @@ async fn facade_binds_node_bins_and_refreshes_warm_install_bindings() {
     );
 }
 
+#[cfg(unix)]
 fn stored_settings_hash(project: &std::path::Path) -> String {
     let state = std::fs::read(project.join("node_modules/.testhost-state/state.json")).unwrap();
     let state: serde_json::Value = serde_json::from_slice(&state).unwrap();
