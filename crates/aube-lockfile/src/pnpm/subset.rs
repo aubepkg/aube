@@ -469,7 +469,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_packages(&mut self) -> Option<BTreeMap<String, RawPackageInfo>> {
-        let mut map = BTreeMap::new();
+        use rayon::prelude::*;
+        // Gather every entry's body first, then deserialize the bodies in
+        // parallel: each one is its own small `yaml_serde` document, and
+        // spinning up a YAML parser per package is most of this
+        // parser's time on a large lockfile. `None` is an empty body.
+        let mut entries: Vec<(String, Option<String>)> = Vec::new();
         while let Some(line) = self.peek_line() {
             if line.indent < 2 {
                 break;
@@ -481,33 +486,45 @@ impl<'a> Parser<'a> {
             // `<depPath>: {}` (empty inline) or block body.
             let name = scalar_key_string(key)?;
             self.consume_line(&line);
-            let info = if let Some(inline) = rest {
+            let body = if let Some(inline) = rest {
                 // Inline body for a package entry is unexpected (pnpm
                 // writes block bodies); bail unless it's an empty map.
                 if inline == b"{}" {
-                    default_package_info()
+                    None
                 } else {
                     return None;
                 }
             } else {
-                self.parse_package_body(4)?
+                self.take_package_body(4)?
             };
-            map.insert(name, info);
+            entries.push((name, body));
         }
-        Some(map)
+        let infos: Vec<RawPackageInfo> = entries
+            .par_iter()
+            .map(|(_, body)| match body {
+                None => Some(default_package_info()),
+                Some(dedented) => yaml_serde::from_str::<RawPackageInfo>(dedented).ok(),
+            })
+            .collect::<Option<_>>()?;
+        Some(
+            entries
+                .into_iter()
+                .map(|(name, _)| name)
+                .zip(infos)
+                .collect(),
+        )
     }
 
-    fn parse_package_body(&mut self, indent: usize) -> Option<RawPackageInfo> {
-        // Collect the whole package sub-block and hand to serde. Package
-        // bodies carry the fiddly `resolution`/`variants`/`string_or_seq`
-        // shapes; re-implementing them risks divergence and they are a
-        // minority of total lines compared to snapshots+importers.
+    /// The dedented source of a package body, for serde. `Some(None)` is
+    /// an empty body. Package bodies carry the fiddly
+    /// `resolution`/`variants`/`string_or_seq` shapes; re-implementing
+    /// them risks divergence, so each one goes through `yaml_serde`.
+    fn take_package_body(&mut self, indent: usize) -> Option<Option<String>> {
         let block = self.take_block(indent)?;
         if block.is_empty() {
-            return Some(default_package_info());
+            return Some(None);
         }
-        let dedented = dedent(&block, indent)?;
-        yaml_serde::from_str::<RawPackageInfo>(&dedented).ok()
+        dedent(&block, indent).map(Some)
     }
 
     fn parse_snapshots(&mut self) -> Option<BTreeMap<String, RawSnapshot>> {
