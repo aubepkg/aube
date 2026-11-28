@@ -67,16 +67,25 @@ fn main() {
             );
         }
         let generated = if json.is_file() {
-            compress_json_primer(&json, &source);
-            let _ = std::fs::remove_file(&json);
-            true
+            match std::fs::read(&json) {
+                Ok(input) => {
+                    compress_json_primer(&json, &input, &source);
+                    let _ = std::fs::remove_file(&json);
+                    true
+                }
+                // Another build sharing this checkout (a second target dir,
+                // e.g. `cargo check` and `cargo test` run side by side)
+                // already compressed the JSON and removed it.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound && source.is_file() => true,
+                Err(e) => panic!("failed to read primer JSON {}: {e}", json.display()),
+            }
         } else {
             let script = manifest_dir
                 .parent()
                 .and_then(Path::parent)
                 .map(|w| w.join("scripts/generate-primer.mjs"));
             matches!(&script, Some(s) if s.is_file())
-                && generate(&manifest_dir, &source, primer_top())
+                && generate(&manifest_dir, &out_dir, &source, primer_top())
         };
         if !generated {
             if primer_required() {
@@ -162,12 +171,16 @@ fn version_cap() -> usize {
     DEFAULT_VERSION_CAP
 }
 
-fn generate(manifest_dir: &Path, source: &Path, top: usize) -> bool {
+fn generate(manifest_dir: &Path, out_dir: &Path, source: &Path, top: usize) -> bool {
     let workspace = manifest_dir
         .parent()
         .and_then(Path::parent)
         .expect("resolver crate lives under crates/aube-resolver");
-    let json = source.with_extension("json");
+    // The intermediate JSON goes in this build's own OUT_DIR, not next to
+    // `source`: builds sharing one checkout with separate target dirs run this
+    // script at the same time, and a shared JSON path let one build delete the
+    // file another was about to read.
+    let json = out_dir.join(source.with_extension("json").file_name().unwrap());
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
 
     let status = match Command::new("node")
@@ -211,19 +224,39 @@ fn generate(manifest_dir: &Path, source: &Path, top: usize) -> bool {
         return false;
     }
 
-    compress_json_primer(&json, source);
+    let input = std::fs::read(&json)
+        .unwrap_or_else(|e| panic!("failed to read primer JSON {}: {e}", json.display()));
+    compress_json_primer(&json, &input, source);
     let _ = std::fs::remove_file(json);
     true
 }
 
-fn compress_json_primer(json: &Path, source: &Path) {
-    let input = std::fs::read(json)
-        .unwrap_or_else(|e| panic!("failed to read primer JSON {}: {e}", json.display()));
-    let primer: BTreeMap<String, Seed> = serde_json::from_slice(&input).unwrap();
+fn compress_json_primer(json: &Path, input: &[u8], source: &Path) {
+    let primer: BTreeMap<String, Seed> = serde_json::from_slice(input)
+        .unwrap_or_else(|e| panic!("failed to parse primer JSON {}: {e}", json.display()));
     let archived = rkyv::to_bytes::<rkyv::rancor::Error>(&primer).unwrap();
     let compressed =
         zstd::stream::encode_all(Cursor::new(archived), primer_compression_level()).unwrap();
-    std::fs::write(source, compressed).unwrap();
+    write_atomically(source, &compressed);
+}
+
+// `source` lives in the shared checkout, so a concurrent build may be reading
+// it while this one writes. Write a private temp file and rename it into place
+// so readers only ever see a complete primer.
+fn write_atomically(path: &Path, bytes: &[u8]) {
+    let mut tmp_name = path.file_name().unwrap().to_os_string();
+    tmp_name.push(format!(".tmp-{}", std::process::id()));
+    let tmp = path.with_file_name(tmp_name);
+    std::fs::write(&tmp, bytes)
+        .unwrap_or_else(|e| panic!("failed to write {}: {e}", tmp.display()));
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        // Windows refuses to replace a file another process has open. A
+        // concurrent build already put an equivalent primer there.
+        if !path.is_file() {
+            panic!("failed to move {} into place: {e}", path.display());
+        }
+    }
 }
 
 fn write_package_blob(out_dir: &Path, compressed: &[u8]) -> Vec<String> {
