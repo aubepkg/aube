@@ -1492,6 +1492,9 @@ fn propagate_peer_suffixes_to_ancestors(
             .map(|(old, new)| (format!("({old})"), format!("({new})")))
             .collect();
         nested.sort_by_key(|(old, _)| std::cmp::Reverse(old.len()));
+        // Ancestors often inherit identical suffixes. Their rewrites are shared
+        // within this pass; the next pass has a different replacement table.
+        let mut suffix_cache = FxHashMap::default();
         let mut next: BTreeMap<String, String> = BTreeMap::new();
         for key in &pkg_keys {
             let Some(segments) = cumulative.get(key) else {
@@ -1549,13 +1552,18 @@ fn propagate_peer_suffixes_to_ancestors(
             // `consumer@1(parent@1(react@19))`, may itself have gained peers
             // (`parent@1(react@19)(zod@4)`). Point at its final key before the
             // length cap is applied to the whole suffix.
-            let mut suffix = parts.concat();
-            if !suffix.is_empty() {
-                suffix = nested
-                    .iter()
-                    .fold(suffix, |acc, (old, new)| acc.replace(old, new));
-            }
-            let effective_suffix = effective_peer_suffix(&suffix, options.peers_suffix_max_length);
+            let effective_suffix =
+                suffix_cache
+                    .entry(parts.concat())
+                    .or_insert_with_key(|suffix| {
+                        let mut rewritten = suffix.clone();
+                        for (old, new) in &nested {
+                            if old.len() <= rewritten.len() {
+                                rewritten = rewritten.replace(old, new);
+                            }
+                        }
+                        effective_peer_suffix(&rewritten, options.peers_suffix_max_length)
+                    });
             let new_key = format!("{canonical}{effective_suffix}");
             if new_key != *key {
                 next.insert(key.clone(), new_key);
