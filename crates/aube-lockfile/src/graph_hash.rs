@@ -197,58 +197,72 @@ pub fn compute_graph_hashes_full(
     patch_hash: PatchHashFn<'_>,
     content_hash: ContentHashFn<'_>,
 ) -> GraphHashes {
+    use rayon::prelude::*;
+    // Nodes are addressed by their position in `graph.packages` (BTree
+    // order), so the passes below index plain vectors instead of
+    // hashing and cloning dep_path strings at every edge. Every walk
+    // visits nodes and edges in the same order as a walk keyed by
+    // dep_path, so cycle breaking, and with it every hash, is unchanged.
+    let dep_paths: Vec<&String> = graph.packages.keys().collect();
+    let packages: Vec<&LockedPackage> = graph.packages.values().collect();
+    let index: FxHashMap<&str, usize> = dep_paths
+        .iter()
+        .enumerate()
+        .map(|(i, dep_path)| (dep_path.as_str(), i))
+        .collect();
+    // Each package's dependency edges, resolved once for both walks:
+    // `(alias, child)` in `dependencies` order, with `None` for a
+    // dangling reference to a package the graph doesn't hold.
+    let edges: Vec<Vec<(&str, Option<usize>)>> = packages
+        .par_iter()
+        .map(|pkg| {
+            pkg.dependencies
+                .iter()
+                .map(|(alias, tail)| {
+                    let child = child_dep_path(graph, alias, tail);
+                    (alias.as_str(), index.get(child.as_str()).copied())
+                })
+                .collect()
+        })
+        .collect();
+
     // Pass 1: identify every dep_path whose `(name, version)` is
     // allowed to run its scripts. This is the "builds" set.
-    let mut builds: FxHashSet<String> = FxHashSet::default();
-    for (dep_path, pkg) in &graph.packages {
-        if allow_build(pkg) {
-            builds.insert(dep_path.clone());
-        }
-    }
+    let builds: Vec<bool> = packages.iter().map(|pkg| allow_build(pkg)).collect();
 
     // Pass 2: per-package dep-graph hash (recursive, memoized).
-    let mut deps_hash_cache: FxHashMap<String, String> = FxHashMap::default();
-    for dep_path in graph.packages.keys() {
-        let _ = calc_deps_hash(
-            graph,
-            dep_path,
-            &mut deps_hash_cache,
-            &mut FxHashSet::default(),
-            patch_hash,
-            content_hash,
-        );
+    let ids: Vec<String> = dep_paths
+        .iter()
+        .zip(&packages)
+        .map(|(dep_path, pkg)| full_pkg_id(pkg, patch_hash, content_hash(dep_path).as_deref()))
+        .collect();
+    let mut deps_hashes: Vec<Option<String>> = vec![None; packages.len()];
+    let mut on_stack = vec![false; packages.len()];
+    for node in 0..packages.len() {
+        calc_deps_hash(node, &edges, &ids, &mut deps_hashes, &mut on_stack);
     }
 
     // Pass 3: per-package "does the subtree transitively need engine
     // tainting?" cache.
-    let mut requires_build_cache: FxHashMap<String, bool> = FxHashMap::default();
-    for dep_path in graph.packages.keys() {
-        transitively_requires_build(
-            graph,
-            &builds,
-            dep_path,
-            &mut requires_build_cache,
-            &mut FxHashSet::default(),
-        );
+    let mut requires_build: Vec<Option<bool>> = vec![None; packages.len()];
+    for node in 0..packages.len() {
+        transitively_requires_build(node, &builds, &edges, &mut requires_build, &mut on_stack);
     }
 
     // Pass 4: final `node_hash(engine?, deps)` per package.
-    let mut node_hash: BTreeMap<String, String> = BTreeMap::new();
-    for dep_path in graph.packages.keys() {
-        let include_engine =
-            engine.is_some() && *requires_build_cache.get(dep_path).unwrap_or(&false);
-        let engine_str = if include_engine {
-            Some(engine.unwrap().0.as_str())
-        } else {
-            None
-        };
-        let deps_hash = deps_hash_cache.get(dep_path).cloned().unwrap_or_default();
-        let hex = hash_canonical(&NodeHashInput {
-            engine: engine_str,
-            deps: &deps_hash,
-        });
-        node_hash.insert(dep_path.clone(), hex);
-    }
+    let node_hash: BTreeMap<String, String> = (0..packages.len())
+        .into_par_iter()
+        .map(|node| {
+            let engine_str = engine
+                .filter(|_| requires_build[node].unwrap_or(false))
+                .map(|engine| engine.0.as_str());
+            let hex = hash_canonical(&NodeHashInput {
+                engine: engine_str,
+                deps: deps_hashes[node].as_deref().unwrap_or_default(),
+            });
+            (dep_paths[node].clone(), hex)
+        })
+        .collect();
 
     GraphHashes { node_hash }
 }
@@ -262,87 +276,70 @@ pub fn compute_graph_hashes_full(
 /// of information for cyclic peer-dep contexts, but it stays stable
 /// and deterministic).
 fn calc_deps_hash(
-    graph: &LockfileGraph,
-    dep_path: &str,
-    cache: &mut FxHashMap<String, String>,
-    parents: &mut FxHashSet<String>,
-    patch_hash: PatchHashFn<'_>,
-    content_hash: ContentHashFn<'_>,
+    node: usize,
+    edges: &[Vec<(&str, Option<usize>)>],
+    ids: &[String],
+    cache: &mut [Option<String>],
+    on_stack: &mut [bool],
 ) -> String {
-    if let Some(cached) = cache.get(dep_path) {
+    if let Some(cached) = &cache[node] {
         return cached.clone();
     }
-    if !parents.insert(dep_path.to_string()) {
+    if on_stack[node] {
         // Cycle: contribute an empty hash to break the recursion.
         // (Pnpm's version of this fans out from `fullPkgId` → `deps:{}`
         // when a node is already a parent; empty string here does the
         // same job via the canonical serializer.)
         return String::new();
     }
-
-    let hash = match graph.packages.get(dep_path) {
-        Some(pkg) => {
-            let id = full_pkg_id(pkg, patch_hash, content_hash(dep_path).as_deref());
-            let mut deps: BTreeMap<String, String> = BTreeMap::new();
-            for (alias, child_tail) in &pkg.dependencies {
-                let child_dep_path = child_dep_path(graph, alias, child_tail);
-                // The child might not be in the graph if the lockfile
-                // has a dangling reference (e.g. after manual edits);
-                // skip rather than panic.
-                if !graph.packages.contains_key(&child_dep_path) {
-                    continue;
-                }
-                let child_hash = calc_deps_hash(
-                    graph,
-                    &child_dep_path,
-                    cache,
-                    parents,
-                    patch_hash,
-                    content_hash,
-                );
-                deps.insert(alias.clone(), child_hash);
-            }
-            hash_canonical(&DepsHashInput {
-                id: &id,
-                deps: &deps,
-            })
-        }
-        None => String::new(),
-    };
-
-    parents.remove(dep_path);
-    cache.insert(dep_path.to_string(), hash.clone());
+    on_stack[node] = true;
+    let mut deps: BTreeMap<&str, String> = BTreeMap::new();
+    for &(alias, child) in &edges[node] {
+        // The child might not be in the graph if the lockfile has a
+        // dangling reference (e.g. after manual edits); skip rather
+        // than panic.
+        let Some(child) = child else {
+            continue;
+        };
+        let child_hash = calc_deps_hash(child, edges, ids, cache, on_stack);
+        deps.insert(alias, child_hash);
+    }
+    let hash = hash_canonical(&DepsHashInput {
+        id: &ids[node],
+        deps: &deps,
+    });
+    on_stack[node] = false;
+    cache[node] = Some(hash.clone());
     hash
 }
 
-/// Returns `true` if `dep_path` is allowed to build, or if any of its
+/// Returns `true` if `node` is allowed to build, or if any of its
 /// transitive children are. Mirrors pnpm's `transitivelyRequiresBuild`.
 fn transitively_requires_build(
-    graph: &LockfileGraph,
-    builds: &FxHashSet<String>,
-    dep_path: &str,
-    cache: &mut FxHashMap<String, bool>,
-    parents: &mut FxHashSet<String>,
+    node: usize,
+    builds: &[bool],
+    edges: &[Vec<(&str, Option<usize>)>],
+    cache: &mut [Option<bool>],
+    on_stack: &mut [bool],
 ) -> bool {
-    if let Some(&cached) = cache.get(dep_path) {
+    if let Some(cached) = cache[node] {
         return cached;
     }
-    if builds.contains(dep_path) {
-        cache.insert(dep_path.to_string(), true);
+    if builds[node] {
+        cache[node] = Some(true);
         return true;
     }
-    if !parents.insert(dep_path.to_string()) {
+    if on_stack[node] {
         return false;
     }
-    let result = match graph.packages.get(dep_path) {
-        Some(pkg) => pkg.dependencies.iter().any(|(alias, tail)| {
-            let child_dep_path = child_dep_path(graph, alias, tail);
-            transitively_requires_build(graph, builds, &child_dep_path, cache, parents)
-        }),
-        None => false,
-    };
-    parents.remove(dep_path);
-    cache.insert(dep_path.to_string(), result);
+    on_stack[node] = true;
+    // A dangling child isn't in the graph, so it can't build.
+    let result = edges[node].iter().any(|&(_, child)| {
+        child
+            .is_some_and(|child| transitively_requires_build(child, builds, edges, cache, on_stack))
+    });
+    on_stack[node] = false;
+    cache[node] = Some(result);
     result
 }
 
@@ -465,7 +462,7 @@ struct NodeHashInput<'a> {
 #[derive(Serialize)]
 struct DepsHashInput<'a> {
     id: &'a str,
-    deps: &'a BTreeMap<String, String>,
+    deps: &'a BTreeMap<&'a str, String>,
 }
 
 #[cfg(test)]
@@ -978,6 +975,128 @@ mod tests {
         assert_eq!(
             alias_keyed.node_hash["odd-alias@3.0.1"], alias_only.node_hash["odd-alias@3.0.1"],
             "alias-keyed patch must take precedence over the registry-keyed one"
+        );
+    }
+
+    /// Hashes recorded from the string-keyed implementation this module
+    /// used before nodes were indexed. Each one names a shared store
+    /// entry, so a change here makes every existing install rebuild
+    /// those entries instead of reusing them.
+    #[test]
+    fn hashes_match_recorded_values() {
+        let mut g = empty_graph();
+        // A diamond (app -> left, right -> shared), a two-node cycle
+        // reached from app, a build-allowed leaf, a patched package and
+        // a dangling reference.
+        let mut app = mk_pkg("app", "1.0.0", Some("sha512-APP"));
+        for (alias, ver) in [
+            ("left", "1.0.0"),
+            ("right", "2.0.0"),
+            ("cyc-a", "1.0.0"),
+            ("missing", "9.9.9"),
+        ] {
+            app.dependencies.insert(alias.into(), ver.into());
+        }
+        let mut left = mk_pkg("left", "1.0.0", Some("sha512-L"));
+        left.dependencies.insert("shared".into(), "3.0.0".into());
+        let mut right = mk_pkg("right", "2.0.0", Some("sha512-R"));
+        right.dependencies.insert("shared".into(), "3.0.0".into());
+        right.dependencies.insert("native".into(), "1.0.0".into());
+        let shared = mk_pkg("shared", "3.0.0", Some("sha512-S"));
+        let native = mk_pkg("native", "1.0.0", Some("sha512-N"));
+        let mut cyc_a = mk_pkg("cyc-a", "1.0.0", Some("sha512-CA"));
+        cyc_a.dependencies.insert("cyc-b".into(), "1.0.0".into());
+        let mut cyc_b = mk_pkg("cyc-b", "1.0.0", Some("sha512-CB"));
+        cyc_b.dependencies.insert("cyc-a".into(), "1.0.0".into());
+        cyc_b.dependencies.insert("shared".into(), "3.0.0".into());
+        for pkg in [app, left, right, shared, native, cyc_a, cyc_b] {
+            g.packages.insert(pkg.dep_path.clone(), pkg);
+        }
+
+        let allow_native = |pkg: &LockedPackage| pkg.registry_name() == "native";
+        let engine = EngineName("linux-x64-node22".into());
+        let patch = |name: &str, version: &str| {
+            (name == "left" && version == "1.0.0").then(|| "patchhash".to_string())
+        };
+        let content =
+            |dep_path: &str| (dep_path == "shared@3.0.0").then(|| "contenthash".to_string());
+
+        let plain = compute_graph_hashes(&g, &|_| false, None);
+        let full = compute_graph_hashes_full(&g, &allow_native, Some(&engine), &patch, &content);
+        let expected_plain: &[(&str, &str)] = &[
+            (
+                "app@1.0.0",
+                "10eb86618bb0e9b85e536376bd098fa531fc2252b9f5f7d4b818416536775cb0",
+            ),
+            (
+                "cyc-a@1.0.0",
+                "5ebdd77847bf1b9114791026f7c9efa45c9e756ad9d3c1211788ae11a09aa51c",
+            ),
+            (
+                "cyc-b@1.0.0",
+                "56d55261931004b9cd4f6e1f8abbd6697fb2294493940a0277a8aa297f787cc9",
+            ),
+            (
+                "left@1.0.0",
+                "3b105c8e74533b7a8f668602985f7664f7e31922deeffa68039095df7b256054",
+            ),
+            (
+                "native@1.0.0",
+                "c3822303dca7998e404101333b81c5e4f8d614d9be709b75dc6584af17542776",
+            ),
+            (
+                "right@2.0.0",
+                "75416dc8944876166dab678c28542309d24fc8b7b2f02bb61e8b1c2865455ac1",
+            ),
+            (
+                "shared@3.0.0",
+                "ee203a7d712ab8ef0b442d72cc3bd75f7c08ff3f408c39e49e76fe947b22fd2d",
+            ),
+        ];
+        assert_eq!(
+            plain
+                .node_hash
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect::<Vec<_>>(),
+            expected_plain
+        );
+        let expected_full: &[(&str, &str)] = &[
+            (
+                "app@1.0.0",
+                "26fc867160cc4320a879fc65d7603f3d8b19c3d91005297db68d131cbdd9ab87",
+            ),
+            (
+                "cyc-a@1.0.0",
+                "981ef60b42037e25cf4803162368fc94c1cd03b4652737fdf9372a3e36972953",
+            ),
+            (
+                "cyc-b@1.0.0",
+                "c267891b08b2355e2394672d33d8a39687c3dd364177a7b1f65135c9735ca72b",
+            ),
+            (
+                "left@1.0.0",
+                "5cd7dcb85213aafff2a2e372a5aa7d4ab447283cd40cd56d1416730929995215",
+            ),
+            (
+                "native@1.0.0",
+                "46336315fe273c1deb974d2826cb5d9d5349300212132152fa61f19a266420f5",
+            ),
+            (
+                "right@2.0.0",
+                "c53db24f65d6c251b7a6ab53c3e3616f120c446dba34cdc1a6da6efeb28a2265",
+            ),
+            (
+                "shared@3.0.0",
+                "59e17026c8521fe48664eba96fb99e747ee0902edc527557ce30546e9d507252",
+            ),
+        ];
+        assert_eq!(
+            full.node_hash
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect::<Vec<_>>(),
+            expected_full
         );
     }
 }
