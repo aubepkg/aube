@@ -29,6 +29,10 @@ use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// The one field of a dependency's `package.json` the engines check reads.
+const ENGINES_FIELD: aube_manifest::TopLevelFields = aube_manifest::TopLevelFields(&["engines"]);
+type ManifestFields = serde_json::Map<String, serde_json::Value>;
+
 /// The version reported for `engines.<self>` checks. Reads the active
 /// embedder's `version` so guardrails here match the version used elsewhere.
 /// Standalone aube's profile sets `version = env!("CARGO_PKG_VERSION")`, so
@@ -317,7 +321,7 @@ fn collect_dep_mismatches(
             let shared =
                 shared_package_dir(dep_path, &pkg.name).map(|dir| dir.join("package.json"));
             let read_manifest =
-                |path: &Path| -> miette::Result<Option<miette::Result<serde_json::Value>>> {
+                |path: &Path| -> miette::Result<Option<miette::Result<ManifestFields>>> {
                     let content = match std::fs::read(path) {
                         Ok(content) => content,
                         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -330,7 +334,9 @@ fn collect_dep_mismatches(
                             ));
                         }
                     };
-                    Ok(Some(serde_json::from_slice(&content).map_err(|e| {
+                    // Only `engines` is read, so the rest of the manifest
+                    // is skipped rather than built into a `Value` tree.
+                    Ok(Some(ENGINES_FIELD.from_slice(&content).map_err(|e| {
                         miette!(
                             code = aube_codes::errors::ERR_AUBE_MANIFEST_PARSE,
                             "failed to parse `package.json` for {}@{} at {}: {e}",

@@ -1330,6 +1330,209 @@ pub fn parse_json<T: serde::de::DeserializeOwned>(
     }
 }
 
+/// Reads only the named top-level fields of a JSON document.
+///
+/// Install-time readers of a dependency's `package.json` want one or two
+/// fields out of it (`bin`, `engines`). Parsing the whole document into a
+/// `serde_json::Value` allocates a tree for every field just to look at those,
+/// and it does so for every package in the graph on each install. This seed
+/// walks the top-level object, keeps the wanted values and skips the rest
+/// without building them, still checking them as strictly as a `Value` parse
+/// would. A repeated key keeps its last value and a document whose top level is
+/// not an object yields no fields, both as a `Value` parse would.
+#[derive(Clone, Copy)]
+pub struct TopLevelFields(pub &'static [&'static str]);
+
+impl<'de> serde::de::DeserializeSeed<'de> for TopLevelFields {
+    type Value = serde_json::Map<String, serde_json::Value>;
+
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        use serde::de::{MapAccess, SeqAccess, Visitor};
+
+        /// A value that is checked and dropped. `serde::de::IgnoredAny` would
+        /// be cheaper, but `serde_json` skips it without checking its strings
+        /// or numbers, so it lets through invalid UTF-8, lone surrogates and
+        /// out-of-range numbers that a `Value` parse rejects. Visiting each
+        /// value keeps the two parses accepting the same documents, and it
+        /// still builds nothing: strings come borrowed where they can.
+        struct Skip;
+
+        impl<'de> serde::Deserialize<'de> for Skip {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                deserializer.deserialize_any(Skip)
+            }
+        }
+
+        impl<'de> Visitor<'de> for Skip {
+            type Value = Skip;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a JSON value")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Skip, E> {
+                Ok(Skip)
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Skip, E> {
+                Ok(Skip)
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Skip, E> {
+                Ok(Skip)
+            }
+
+            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Skip, E> {
+                Ok(Skip)
+            }
+
+            fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Skip, E> {
+                Ok(Skip)
+            }
+
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Skip, E> {
+                Ok(Skip)
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Skip, A::Error> {
+                while seq.next_element::<Skip>()?.is_some() {}
+                Ok(Skip)
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Skip, A::Error> {
+                while map.next_entry::<Skip, Skip>()?.is_some() {}
+                Ok(Skip)
+            }
+        }
+
+        /// A key, kept only when it is one of the wanted fields.
+        struct Key(&'static [&'static str]);
+
+        impl<'de> serde::de::DeserializeSeed<'de> for Key {
+            type Value = Option<&'static str>;
+
+            fn deserialize<D: serde::Deserializer<'de>>(
+                self,
+                deserializer: D,
+            ) -> Result<Self::Value, D::Error> {
+                deserializer.deserialize_str(self)
+            }
+        }
+
+        impl Visitor<'_> for Key {
+            type Value = Option<&'static str>;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object key")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, key: &str) -> Result<Self::Value, E> {
+                Ok(self.0.iter().copied().find(|wanted| *wanted == key))
+            }
+        }
+
+        struct Fields(&'static [&'static str]);
+
+        impl<'de> Visitor<'de> for Fields {
+            type Value = serde_json::Map<String, serde_json::Value>;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a JSON document")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut fields = serde_json::Map::new();
+                while let Some(key) = map.next_key_seed(Key(self.0))? {
+                    match key {
+                        Some(key) => {
+                            fields.insert(key.to_string(), map.next_value()?);
+                        }
+                        None => {
+                            map.next_value::<Skip>()?;
+                        }
+                    }
+                }
+                Ok(fields)
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<Skip>()?.is_some() {}
+                Ok(serde_json::Map::new())
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(serde_json::Map::new())
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Self::Value, E> {
+                Ok(serde_json::Map::new())
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Self::Value, E> {
+                Ok(serde_json::Map::new())
+            }
+
+            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Self::Value, E> {
+                Ok(serde_json::Map::new())
+            }
+
+            fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Self::Value, E> {
+                Ok(serde_json::Map::new())
+            }
+
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(serde_json::Map::new())
+            }
+        }
+
+        deserializer.deserialize_any(Fields(self.0))
+    }
+}
+
+impl TopLevelFields {
+    /// Read the fields out of `bytes` with `serde_json`, as
+    /// `serde_json::from_slice` would read the whole document.
+    pub fn from_slice(
+        self,
+        bytes: &[u8],
+    ) -> serde_json::Result<serde_json::Map<String, serde_json::Value>> {
+        use serde::de::DeserializeSeed;
+        let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+        let fields = self.deserialize(&mut deserializer)?;
+        deserializer.end()?;
+        Ok(fields)
+    }
+}
+
+/// [`parse_json`] for a `serde_json::Value`, keeping only `fields` of the
+/// top-level object. Accepts and rejects the same documents as
+/// `parse_json::<serde_json::Value>` and returns the same values for the
+/// fields it keeps: a document the fast path rejects goes through
+/// `parse_json` itself, for its error or for the lenient parse it allows.
+pub fn parse_json_fields(
+    path: &Path,
+    content: String,
+    fields: &'static [&'static str],
+) -> Result<serde_json::Map<String, serde_json::Value>, Error> {
+    let body = content.strip_prefix('\u{FEFF}').unwrap_or(&content);
+    if let Ok(selected) = TopLevelFields(fields).from_slice(body.as_bytes()) {
+        return Ok(selected);
+    }
+    let value = parse_json::<serde_json::Value>(path, content)?;
+    let mut selected = serde_json::Map::new();
+    if let serde_json::Value::Object(map) = value {
+        for (key, value) in map {
+            if fields.contains(&key.as_str()) {
+                selected.insert(key, value);
+            }
+        }
+    }
+    Ok(selected)
+}
+
 /// Parse a YAML document from `content`, returning an [`Error::Parse`] on
 /// failure with the source content + span attached. `yaml_serde` reports
 /// errors with a `Location { index, line, column }` we can feed straight
@@ -1448,6 +1651,95 @@ pub fn serialize_json_with_indent<T: serde::Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn top_level_fields_match_a_value_parse() {
+        let docs = [
+            r#"{"name":"pkg","scripts":{"bin":"x"},"bin":{"a":"./a.js"},"files":["a"]}"#,
+            r#"{"bin":"./first.js","bin":"./last.js"}"#,
+            r#"{"engines":{"node":">=18"},"bin":null}"#,
+            r#"{}"#,
+            r#"["bin",{"bin":"x"}]"#,
+            r#""bin""#,
+            "1",
+            "true",
+            "null",
+        ];
+        for doc in docs {
+            let selected = TopLevelFields(&["bin", "engines"])
+                .from_slice(doc.as_bytes())
+                .unwrap();
+            let value: serde_json::Value = serde_json::from_str(doc).unwrap();
+            for field in ["bin", "engines"] {
+                assert_eq!(
+                    selected.get(field),
+                    value.as_object().and_then(|map| map.get(field)),
+                    "{field} in {doc}"
+                );
+            }
+            assert!(
+                selected.keys().all(|key| key == "bin" || key == "engines"),
+                "{doc}"
+            );
+        }
+    }
+
+    #[test]
+    fn top_level_fields_reject_malformed_json() {
+        for doc in [
+            r#"{"bin":"#,
+            r#"{"name":"x",}"#,
+            r#"{"name":"x"} trailing"#,
+            "",
+        ] {
+            assert!(
+                TopLevelFields(&["bin"]).from_slice(doc.as_bytes()).is_err(),
+                "{doc}"
+            );
+        }
+    }
+
+    #[test]
+    fn top_level_fields_check_skipped_values_like_a_value_parse() {
+        let docs: [&[u8]; 12] = [
+            b"{\"x\":\"\xff\xfe\",\"bin\":1}",
+            b"{\"x\":{\"y\":[\"\xc3\"]},\"bin\":1}",
+            b"{\"\xff\":1,\"bin\":1}",
+            b"{\"x\":\"\\uZZZZ\",\"bin\":1}",
+            b"{\"x\":\"\\ud800\",\"bin\":1}",
+            b"{\"x\":[{\"\\udc00\":1}],\"bin\":1}",
+            b"{\"x\":1e400,\"bin\":1}",
+            b"{\"x\":[{\"y\":-1e400}],\"bin\":1}",
+            b"{\"x\":18446744073709551616,\"bin\":1}",
+            b"{\"x\":\"\\ud83d\\ude00 caf\xc3\xa9\",\"bin\":1}",
+            b"{\"x\":[1.5e300,-0,{\"y\":null}],\"bin\":1}",
+            b"[\"\\ud800\"]",
+        ];
+        for doc in docs {
+            let full = serde_json::from_slice::<serde_json::Value>(doc);
+            let fast = TopLevelFields(&["bin"]).from_slice(doc);
+            assert_eq!(
+                fast.is_ok(),
+                full.is_ok(),
+                "{}",
+                String::from_utf8_lossy(doc)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_json_fields_strips_bom_and_reports_parse_errors() {
+        let path = Path::new("package.json");
+        let fields = parse_json_fields(
+            path,
+            "\u{FEFF}{\"bin\":\"./a.js\",\"name\":\"x\"}".into(),
+            &["bin"],
+        )
+        .unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields["bin"], "./a.js");
+        assert!(parse_json_fields(path, "{\"bin\":".into(), &["bin"]).is_err());
+    }
     use proptest::prelude::*;
 
     #[test]
@@ -2026,6 +2318,87 @@ mod tests {
         let deps = BTreeMap::new();
         let names = p.bundled_dependencies.as_ref().unwrap().names(&deps);
         assert_eq!(names, vec!["foo"]);
+    }
+
+    /// A JSON value for [`top_level_fields_match_a_value_parse_for_any_document`]:
+    /// scalars with escapes and non-ASCII text, nested a few levels deep.
+    fn arbitrary_json() -> impl Strategy<Value = serde_json::Value> {
+        let leaf = prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            any::<i64>().prop_map(|n| serde_json::Value::Number(n.into())),
+            any::<f64>()
+                .prop_filter("finite", |n| n.is_finite())
+                .prop_map(|n| serde_json::json!(n)),
+            "(\\PC|[\"\\\\\n\t\u{1F600}]){0,12}".prop_map(serde_json::Value::String),
+        ];
+        leaf.prop_recursive(3, 32, 6, |inner| {
+            prop_oneof![
+                proptest::collection::vec(inner.clone(), 0..6).prop_map(serde_json::Value::Array),
+                proptest::collection::btree_map("(\\PC|[\"\\\\]){0,8}", inner, 0..6)
+                    .prop_map(|map| serde_json::Value::Object(map.into_iter().collect())),
+            ]
+        })
+    }
+
+    /// An object key as JSON text: plain, or with every character written
+    /// as a `\uXXXX` escape, so `"\u0062in"` still names `bin`.
+    fn render_key(key: &str, escape: bool) -> String {
+        if !escape {
+            return serde_json::to_string(key).unwrap();
+        }
+        let mut out = String::from("\"");
+        for unit in key.encode_utf16() {
+            out.push_str(&format!("\\u{unit:04x}"));
+        }
+        out.push('"');
+        out
+    }
+
+    proptest! {
+        /// Builds the document as text so it can repeat a key, which a
+        /// `serde_json::Map` cannot hold, and checks the selected fields
+        /// against a full `Value` parse (whose map keeps a repeated key's
+        /// last value).
+        #[test]
+        fn top_level_fields_match_a_value_parse_for_any_document(
+            entries in proptest::collection::vec(
+                (
+                    prop_oneof![
+                        Just("bin".to_string()),
+                        Just("engines".to_string()),
+                        Just("name".to_string()),
+                        "(\\PC|[\"\\\\]){0,8}",
+                    ],
+                    any::<bool>(),
+                    arbitrary_json(),
+                ),
+                0..10,
+            ),
+        ) {
+            let doc = format!(
+                "{{{}}}",
+                entries
+                    .iter()
+                    .map(|(key, escape, value)| format!("{}:{value}", render_key(key, *escape)))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            let full: serde_json::Value = serde_json::from_str(&doc).unwrap();
+            let expected: serde_json::Map<String, serde_json::Value> = full
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(key, _)| matches!(key.as_str(), "bin" | "engines"))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            let fields = TopLevelFields(&["bin", "engines"]).from_slice(doc.as_bytes()).unwrap();
+            prop_assert_eq!(&fields, &expected);
+            let via_path =
+                parse_json_fields(Path::new("package.json"), doc.clone(), &["bin", "engines"])
+                    .unwrap();
+            prop_assert_eq!(&via_path, &expected);
+        }
     }
 
     proptest! {
