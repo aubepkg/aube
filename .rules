@@ -277,3 +277,6 @@ forbidden[7]:
   - TODO without tracking link
   - single-use wrappers (1-3 lines called once, inline it)
   - feature flags or backwards-compat shims for one-time ops
+
+entire:
+  agent_guide: read @.entire/agent-guide.md for workflow, source inspection and verification with Entire Graph and Brain
