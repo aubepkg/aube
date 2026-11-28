@@ -387,6 +387,13 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         .into_diagnostic()
         .wrap_err("failed to load workspace config")?;
     let settings_ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
+    // The engines check needs the Node version once the lockfile is
+    // loaded. Probing it spawns `node --version`, which takes a few
+    // milliseconds of process startup; begin now so that overlaps
+    // lockfile parsing instead of blocking the install.
+    crate::engines::prewarm_node_version(
+        aube_settings::resolved::node_version(&settings_ctx).as_deref(),
+    );
     // `ignoreScripts` also resolves from the env / `.npmrc` / workspace-yaml
     // chain, not just `--ignore-scripts`. Fold it in here, the one choke
     // point every entry point passes through (`install`, `ci`, `add`,
@@ -1014,7 +1021,20 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 // in the platform pass below, after the host filter, so
                 // there's no full peer-correct graph to mirror. Drop
                 // any older copy instead of letting it go stale.
-                if matches!(
+                // An `aube-lock.yaml` in the project root that was reused
+                // as-is already is the hidden copy, byte for byte, so
+                // copy it rather than re-serializing the whole graph.
+                let reused_aube_lockfile = (kind == aube_lockfile::LockfileKind::Aube
+                    && lockfile_dir == cwd)
+                    .then(|| {
+                        aube_lockfile::active_lockfile_path_selecting(&lockfile_dir, Some(kind)).1
+                    })
+                    .flatten();
+                if let Some(source) = reused_aube_lockfile {
+                    hidden_lockfile_write_handle = Some(tokio::task::spawn_blocking(move || {
+                        hidden_lockfile::copy_from(&path, &source);
+                    }));
+                } else if matches!(
                     kind,
                     aube_lockfile::LockfileKind::Aube | aube_lockfile::LockfileKind::Pnpm
                 ) {
