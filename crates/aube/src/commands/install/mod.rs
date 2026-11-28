@@ -387,13 +387,6 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         .into_diagnostic()
         .wrap_err("failed to load workspace config")?;
     let settings_ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
-    // The engines check needs the Node version once the lockfile is
-    // loaded. Probing it spawns `node --version`, which takes a few
-    // milliseconds of process startup; begin now so that overlaps
-    // lockfile parsing instead of blocking the install.
-    crate::engines::prewarm_node_version(
-        aube_settings::resolved::node_version(&settings_ctx).as_deref(),
-    );
     // `ignoreScripts` also resolves from the env / `.npmrc` / workspace-yaml
     // chain, not just `--ignore-scripts`. Fold it in here, the one choke
     // point every entry point passes through (`install`, `ci`, `add`,
@@ -614,6 +607,15 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         }
         phase_timings.record("root_preinstall", phase_start.elapsed());
     }
+    // The engines check needs the Node version once the lockfile is
+    // loaded. Probing it spawns `node --version`, which takes a few
+    // milliseconds of process startup; begin now so that overlaps
+    // lockfile parsing instead of blocking the install. Not earlier: the
+    // runtime switch and the root `preinstall` hooks above can change
+    // which Node the probed path runs, and the result is cached.
+    crate::engines::prewarm_node_version(
+        aube_settings::resolved::node_version(&settings_ctx).as_deref(),
+    );
     // Progress UI. `None` on non-TTY stderr, in text mode (e.g. `-v`), or
     // when progress output is otherwise disabled. A normal install produces
     // *no* output other than the bar itself — everything else is tracing at

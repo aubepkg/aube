@@ -890,6 +890,10 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
     // state (a per-call runtime's node executable, an embedder's store and
     // cache overrides) that the rayon workers below don't inherit.
     let settings_hash = hash_settings(project_dir, cli_flags);
+    // Fingerprinting copied local directories can fail (a source removed
+    // mid-install). Do it before the license scan starts, so that error
+    // returns at once instead of waiting on read-only license work.
+    let local_directory_hashes = collect_local_directory_hashes(project_dir, layout.graph)?;
     let build_state = || -> Result<InstallState, std::io::Error> {
         // Captured *before* the hash: an edit landing between the two makes
         // the stored meta stale relative to the hashed content, so the next
@@ -959,7 +963,6 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
         // to verify; empty for the default shared layout.
         let (member_lockfile_hashes, member_lockfile_meta) =
             collect_member_lockfile_state(project_dir);
-        let local_directory_hashes = collect_local_directory_hashes(project_dir, layout.graph)?;
 
         Ok(InstallState {
             lockfile_hash,
