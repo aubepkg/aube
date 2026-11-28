@@ -977,4 +977,126 @@ mod tests {
             "alias-keyed patch must take precedence over the registry-keyed one"
         );
     }
+
+    /// Hashes recorded from the string-keyed implementation this module
+    /// used before nodes were indexed. Each one names a shared store
+    /// entry, so a change here makes every existing install rebuild
+    /// those entries instead of reusing them.
+    #[test]
+    fn hashes_match_recorded_values() {
+        let mut g = empty_graph();
+        // A diamond (app -> left, right -> shared), a two-node cycle
+        // reached from app, a build-allowed leaf, a patched package and
+        // a dangling reference.
+        let mut app = mk_pkg("app", "1.0.0", Some("sha512-APP"));
+        for (alias, ver) in [
+            ("left", "1.0.0"),
+            ("right", "2.0.0"),
+            ("cyc-a", "1.0.0"),
+            ("missing", "9.9.9"),
+        ] {
+            app.dependencies.insert(alias.into(), ver.into());
+        }
+        let mut left = mk_pkg("left", "1.0.0", Some("sha512-L"));
+        left.dependencies.insert("shared".into(), "3.0.0".into());
+        let mut right = mk_pkg("right", "2.0.0", Some("sha512-R"));
+        right.dependencies.insert("shared".into(), "3.0.0".into());
+        right.dependencies.insert("native".into(), "1.0.0".into());
+        let shared = mk_pkg("shared", "3.0.0", Some("sha512-S"));
+        let native = mk_pkg("native", "1.0.0", Some("sha512-N"));
+        let mut cyc_a = mk_pkg("cyc-a", "1.0.0", Some("sha512-CA"));
+        cyc_a.dependencies.insert("cyc-b".into(), "1.0.0".into());
+        let mut cyc_b = mk_pkg("cyc-b", "1.0.0", Some("sha512-CB"));
+        cyc_b.dependencies.insert("cyc-a".into(), "1.0.0".into());
+        cyc_b.dependencies.insert("shared".into(), "3.0.0".into());
+        for pkg in [app, left, right, shared, native, cyc_a, cyc_b] {
+            g.packages.insert(pkg.dep_path.clone(), pkg);
+        }
+
+        let allow_native = |pkg: &LockedPackage| pkg.registry_name() == "native";
+        let engine = EngineName("linux-x64-node22".into());
+        let patch = |name: &str, version: &str| {
+            (name == "left" && version == "1.0.0").then(|| "patchhash".to_string())
+        };
+        let content =
+            |dep_path: &str| (dep_path == "shared@3.0.0").then(|| "contenthash".to_string());
+
+        let plain = compute_graph_hashes(&g, &|_| false, None);
+        let full = compute_graph_hashes_full(&g, &allow_native, Some(&engine), &patch, &content);
+        let expected_plain: &[(&str, &str)] = &[
+            (
+                "app@1.0.0",
+                "10eb86618bb0e9b85e536376bd098fa531fc2252b9f5f7d4b818416536775cb0",
+            ),
+            (
+                "cyc-a@1.0.0",
+                "5ebdd77847bf1b9114791026f7c9efa45c9e756ad9d3c1211788ae11a09aa51c",
+            ),
+            (
+                "cyc-b@1.0.0",
+                "56d55261931004b9cd4f6e1f8abbd6697fb2294493940a0277a8aa297f787cc9",
+            ),
+            (
+                "left@1.0.0",
+                "3b105c8e74533b7a8f668602985f7664f7e31922deeffa68039095df7b256054",
+            ),
+            (
+                "native@1.0.0",
+                "c3822303dca7998e404101333b81c5e4f8d614d9be709b75dc6584af17542776",
+            ),
+            (
+                "right@2.0.0",
+                "75416dc8944876166dab678c28542309d24fc8b7b2f02bb61e8b1c2865455ac1",
+            ),
+            (
+                "shared@3.0.0",
+                "ee203a7d712ab8ef0b442d72cc3bd75f7c08ff3f408c39e49e76fe947b22fd2d",
+            ),
+        ];
+        assert_eq!(
+            plain
+                .node_hash
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect::<Vec<_>>(),
+            expected_plain
+        );
+        let expected_full: &[(&str, &str)] = &[
+            (
+                "app@1.0.0",
+                "26fc867160cc4320a879fc65d7603f3d8b19c3d91005297db68d131cbdd9ab87",
+            ),
+            (
+                "cyc-a@1.0.0",
+                "981ef60b42037e25cf4803162368fc94c1cd03b4652737fdf9372a3e36972953",
+            ),
+            (
+                "cyc-b@1.0.0",
+                "c267891b08b2355e2394672d33d8a39687c3dd364177a7b1f65135c9735ca72b",
+            ),
+            (
+                "left@1.0.0",
+                "5cd7dcb85213aafff2a2e372a5aa7d4ab447283cd40cd56d1416730929995215",
+            ),
+            (
+                "native@1.0.0",
+                "46336315fe273c1deb974d2826cb5d9d5349300212132152fa61f19a266420f5",
+            ),
+            (
+                "right@2.0.0",
+                "c53db24f65d6c251b7a6ab53c3e3616f120c446dba34cdc1a6da6efeb28a2265",
+            ),
+            (
+                "shared@3.0.0",
+                "59e17026c8521fe48664eba96fb99e747ee0902edc527557ce30546e9d507252",
+            ),
+        ];
+        assert_eq!(
+            full.node_hash
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect::<Vec<_>>(),
+            expected_full
+        );
+    }
 }
