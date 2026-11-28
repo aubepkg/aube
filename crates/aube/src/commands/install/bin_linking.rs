@@ -211,10 +211,12 @@ fn read_materialized_pkg_json(
             ));
         }
     };
-    let value = aube_manifest::parse_json::<serde_json::Value>(&pkg_json_path, content)
+    // Callers only look at `bin`, so keep that field and skip the rest of
+    // the manifest instead of building it all into a `Value` tree.
+    let fields = aube_manifest::parse_json_fields(&pkg_json_path, content, &["bin"])
         .map_err(miette::Report::new)
         .wrap_err_with(|| format!("failed to parse package.json for {name}"))?;
-    Ok(Some(value))
+    Ok(Some(serde_json::Value::Object(fields)))
 }
 
 #[allow(clippy::too_many_arguments)]
