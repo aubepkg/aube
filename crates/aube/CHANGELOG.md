@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.1](https://github.com/aubepkg/aube/compare/v2.11.0...v2.11.1) - 2026-11-28
+
+### Fixed
+
+- *(publish)* key scoped tarball attachment by unsanitized name ([#1990](https://github.com/aubepkg/aube/pull/1990))
+
+### Other
+
+- *(install)* read only the manifest fields install needs ([#2002](https://github.com/aubepkg/aube/pull/2002))
+- *(install)* reuse the lockfile graph and its virtual store hashes ([#1999](https://github.com/aubepkg/aube/pull/1999))
+- *(gvs)* reuse shared entries without indexes and trim the link phase ([#1998](https://github.com/aubepkg/aube/pull/1998))
+- *(install)* overlap the install's bookkeeping with its other work ([#1997](https://github.com/aubepkg/aube/pull/1997))
+
 ## [2.11.0](https://github.com/aubepkg/aube/compare/v2.10.1...v2.11.0) - 2026-11-22
 
 ### Added
