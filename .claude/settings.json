@@ -33,7 +33,7 @@
       {
         "hooks": [
           {
-            "command": "sh -c 'if command -v entire-brain >/dev/null 2>&1; then exec entire-brain hook pre-edit --claude-hook; fi; if command -v entire >/dev/null 2>&1; then exec entire brain hook pre-edit --claude-hook; fi; exit 0'",
+            "command": "sh -c 'if command -v entire-brain >/dev/null 2>&1; then exec entire-brain hook pre-edit --claude-hook; fi; command -v entire >/dev/null 2>&1 || exit 0; out=$(entire brain hook pre-edit --claude-hook 2>/dev/null) || exit 0; printf \"%s\" \"$out\"'",
             "type": "command"
           }
         ],
