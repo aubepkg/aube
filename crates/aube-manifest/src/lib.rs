@@ -2320,6 +2320,87 @@ mod tests {
         assert_eq!(names, vec!["foo"]);
     }
 
+    /// A JSON value for [`top_level_fields_match_a_value_parse_for_any_document`]:
+    /// scalars with escapes and non-ASCII text, nested a few levels deep.
+    fn arbitrary_json() -> impl Strategy<Value = serde_json::Value> {
+        let leaf = prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            any::<i64>().prop_map(|n| serde_json::Value::Number(n.into())),
+            any::<f64>()
+                .prop_filter("finite", |n| n.is_finite())
+                .prop_map(|n| serde_json::json!(n)),
+            "(\\PC|[\"\\\\\n\t\u{1F600}]){0,12}".prop_map(serde_json::Value::String),
+        ];
+        leaf.prop_recursive(3, 32, 6, |inner| {
+            prop_oneof![
+                proptest::collection::vec(inner.clone(), 0..6).prop_map(serde_json::Value::Array),
+                proptest::collection::btree_map("(\\PC|[\"\\\\]){0,8}", inner, 0..6)
+                    .prop_map(|map| serde_json::Value::Object(map.into_iter().collect())),
+            ]
+        })
+    }
+
+    /// An object key as JSON text: plain, or with every character written
+    /// as a `\uXXXX` escape, so `"\u0062in"` still names `bin`.
+    fn render_key(key: &str, escape: bool) -> String {
+        if !escape {
+            return serde_json::to_string(key).unwrap();
+        }
+        let mut out = String::from("\"");
+        for unit in key.encode_utf16() {
+            out.push_str(&format!("\\u{unit:04x}"));
+        }
+        out.push('"');
+        out
+    }
+
+    proptest! {
+        /// Builds the document as text so it can repeat a key, which a
+        /// `serde_json::Map` cannot hold, and checks the selected fields
+        /// against a full `Value` parse (whose map keeps a repeated key's
+        /// last value).
+        #[test]
+        fn top_level_fields_match_a_value_parse_for_any_document(
+            entries in proptest::collection::vec(
+                (
+                    prop_oneof![
+                        Just("bin".to_string()),
+                        Just("engines".to_string()),
+                        Just("name".to_string()),
+                        "(\\PC|[\"\\\\]){0,8}",
+                    ],
+                    any::<bool>(),
+                    arbitrary_json(),
+                ),
+                0..10,
+            ),
+        ) {
+            let doc = format!(
+                "{{{}}}",
+                entries
+                    .iter()
+                    .map(|(key, escape, value)| format!("{}:{value}", render_key(key, *escape)))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            let full: serde_json::Value = serde_json::from_str(&doc).unwrap();
+            let expected: serde_json::Map<String, serde_json::Value> = full
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(key, _)| matches!(key.as_str(), "bin" | "engines"))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            let fields = TopLevelFields(&["bin", "engines"]).from_slice(doc.as_bytes()).unwrap();
+            prop_assert_eq!(&fields, &expected);
+            let via_path =
+                parse_json_fields(Path::new("package.json"), doc.clone(), &["bin", "engines"])
+                    .unwrap();
+            prop_assert_eq!(&via_path, &expected);
+        }
+    }
+
     proptest! {
         #[test]
         fn bundled_dependency_arrays_keep_only_names(
