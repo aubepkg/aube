@@ -244,11 +244,34 @@ fn compress_json_primer(json: &Path, input: &[u8], source: &Path) {
 // it while this one writes. Write a private temp file and rename it into place
 // so readers only ever see a complete primer.
 fn write_atomically(path: &Path, bytes: &[u8]) {
-    let mut tmp_name = path.file_name().unwrap().to_os_string();
-    tmp_name.push(format!(".tmp-{}", std::process::id()));
-    let tmp = path.with_file_name(tmp_name);
-    std::fs::write(&tmp, bytes)
+    use std::io::Write;
+
+    // Created with `create_new` so no two writers ever share an inode, even
+    // builds in separate PID namespaces (containers sharing a bind-mounted
+    // checkout) that happen to have the same PID.
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    let (tmp, mut file) = (0u32..)
+        .find_map(|attempt| {
+            let mut tmp_name = path.file_name().unwrap().to_os_string();
+            tmp_name.push(format!(".tmp-{}-{nanos}-{attempt}", std::process::id()));
+            let tmp = path.with_file_name(tmp_name);
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)
+            {
+                Ok(file) => Some((tmp, file)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(e) => panic!("failed to create {}: {e}", tmp.display()),
+            }
+        })
+        .unwrap();
+    file.write_all(bytes)
         .unwrap_or_else(|e| panic!("failed to write {}: {e}", tmp.display()));
+    drop(file);
     if let Err(e) = std::fs::rename(&tmp, path) {
         let _ = std::fs::remove_file(&tmp);
         // Windows refuses to replace a file another process has open. A
