@@ -886,6 +886,10 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
             collect_package_license_state(project_dir, &layout, license_fingerprint.clone());
         Ok(Some(serde_json::to_vec(&license_state)?))
     };
+    // Hashed here, on the install's own task: the hash reads task-local
+    // state (a per-call runtime's node executable, an embedder's store and
+    // cache overrides) that the rayon workers below don't inherit.
+    let settings_hash = hash_settings(project_dir, cli_flags);
     let build_state = || -> Result<InstallState, std::io::Error> {
         // Captured *before* the hash: an edit landing between the two makes
         // the stored meta stale relative to the hashed content, so the next
@@ -897,7 +901,6 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
             .and_then(|path| FileMeta::capture(&path));
         let (lockfile_hash, lockfile_snapshot_name) =
             snapshot_active_lockfile(project_dir, &state_path)?;
-        let settings_hash = hash_settings(project_dir, cli_flags);
         let install_layout = InstallLayoutState::from_graph(project_dir, &layout)?;
         // A `link:` dep's manifest names the commands install links into its
         // dependents' `.bin`, so an edit to its install shape busts the warm
