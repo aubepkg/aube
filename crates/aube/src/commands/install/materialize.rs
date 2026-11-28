@@ -41,9 +41,10 @@ pub(super) enum VirtualStorePlan {
         virtual_store: std::path::PathBuf,
         hashes: std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>,
         project_local: std::sync::Arc<std::collections::BTreeSet<String>>,
-        /// Whether the linker reuses shared entries that were already
-        /// materialized. `--force` turns this off: it rebuilds every
-        /// entry this install did not place itself.
+        /// Whether fetch may treat an already materialized shared entry
+        /// as current. Off under `--force`, which rebuilds every entry
+        /// this install did not place itself, and under the hoisted
+        /// linker, which doesn't link from shared entries.
         trust_shared_entries: bool,
     },
     /// `.aube/<dep_path>` entries are per-project directories keyed by
@@ -170,7 +171,12 @@ pub(super) struct VirtualStorePlanInputs<'a> {
     pub patch_hashes: std::collections::BTreeMap<String, String>,
     pub node_version: Option<String>,
     pub build_policy: std::sync::Arc<aube_scripts::BuildPolicy>,
-    pub force: bool,
+    /// Let fetch skip a package whose shared entry is already
+    /// materialized (see [`VirtualStorePlan::entry_is_current`]). Only
+    /// the isolated linker links from shared entries; the hoisted linker
+    /// copies from the store's own index and files, which fetch still
+    /// has to verify. `--force` turns it off too.
+    pub trust_shared_entries: bool,
 }
 
 /// Decide the virtual-store layout and, under the global virtual
@@ -197,7 +203,7 @@ pub(super) async fn plan_virtual_store(
         patch_hashes,
         node_version,
         build_policy,
-        force,
+        trust_shared_entries,
     } = inputs;
 
     // Probe linker built exactly the way the prewarm and link phases
@@ -277,7 +283,7 @@ pub(super) async fn plan_virtual_store(
         virtual_store,
         hashes: std::sync::Arc::new(hashes),
         project_local: std::sync::Arc::new(project_local),
-        trust_shared_entries: !force,
+        trust_shared_entries,
     })
 }
 

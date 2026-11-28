@@ -618,6 +618,23 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
 
     let use_global_virtual_store_override =
         gvs::resolve_global_virtual_store_override(&settings_ctx, &manifests, &opts.env_snapshot);
+    // Fetch may skip packages whose shared virtual-store entry already
+    // exists only when the isolated linker will link from those entries.
+    // The hoisted linker copies from the store's index and files, so
+    // fetch keeps verifying them; `--force` rebuilds everything.
+    let trust_shared_entries_setting = !opts.force && {
+        let cli = aube_settings::values::string_from_cli("nodeLinker", settings_ctx.cli);
+        match cli.as_deref() {
+            Some(cli) => matches!(
+                cli.trim().parse::<aube_linker::NodeLinker>(),
+                Ok(aube_linker::NodeLinker::Isolated)
+            ),
+            None => matches!(
+                aube_settings::resolved::node_linker(&settings_ctx),
+                aube_settings::resolved::NodeLinker::Isolated
+            ),
+        }
+    };
 
     // Remember which lockfile format the project currently uses so
     // every downstream write site (the `--lockfile-only` short-circuit
@@ -1135,7 +1152,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 patch_hashes: lock_patch_hashes,
                 node_version: lock_node_version,
                 build_policy: lock_build_policy,
-                force: opts.force,
+                trust_shared_entries: trust_shared_entries_setting,
             })
             .await?;
             prewarm_project_local_dep_paths =
@@ -1996,7 +2013,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 patch_hashes: materialize_patch_hashes,
                 node_version: node_version_for_prewarm.clone(),
                 build_policy: build_policy_for_prewarm.clone(),
-                force: opts.force,
+                trust_shared_entries: trust_shared_entries_setting,
             })
             .await?;
             engines_virtual_store_plan = Some(materialize_virtual_store_plan.clone());
