@@ -1337,8 +1337,8 @@ pub fn parse_json<T: serde::de::DeserializeOwned>(
 /// `serde_json::Value` allocates a tree for every field just to look at those,
 /// and it does so for every package in the graph on each install. This seed
 /// walks the top-level object, keeps the wanted values and skips the rest
-/// without building them, still checking that the document is well-formed
-/// JSON. A repeated key keeps its last value and a document whose top level is
+/// without building them, still checking them as strictly as a `Value` parse
+/// would. A repeated key keeps its last value and a document whose top level is
 /// not an object yields no fields, both as a `Value` parse would.
 #[derive(Clone, Copy)]
 pub struct TopLevelFields(pub &'static [&'static str]);
@@ -1350,7 +1350,63 @@ impl<'de> serde::de::DeserializeSeed<'de> for TopLevelFields {
         self,
         deserializer: D,
     ) -> Result<Self::Value, D::Error> {
-        use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
+        use serde::de::{MapAccess, SeqAccess, Visitor};
+
+        /// A value that is checked and dropped. `serde::de::IgnoredAny` would
+        /// be cheaper, but `serde_json` skips it without checking its strings
+        /// or numbers, so it lets through invalid UTF-8, lone surrogates and
+        /// out-of-range numbers that a `Value` parse rejects. Visiting each
+        /// value keeps the two parses accepting the same documents, and it
+        /// still builds nothing: strings come borrowed where they can.
+        struct Skip;
+
+        impl<'de> serde::Deserialize<'de> for Skip {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                deserializer.deserialize_any(Skip)
+            }
+        }
+
+        impl<'de> Visitor<'de> for Skip {
+            type Value = Skip;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a JSON value")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Skip, E> {
+                Ok(Skip)
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Skip, E> {
+                Ok(Skip)
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Skip, E> {
+                Ok(Skip)
+            }
+
+            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Skip, E> {
+                Ok(Skip)
+            }
+
+            fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Skip, E> {
+                Ok(Skip)
+            }
+
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Skip, E> {
+                Ok(Skip)
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Skip, A::Error> {
+                while seq.next_element::<Skip>()?.is_some() {}
+                Ok(Skip)
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Skip, A::Error> {
+                while map.next_entry::<Skip, Skip>()?.is_some() {}
+                Ok(Skip)
+            }
+        }
 
         /// A key, kept only when it is one of the wanted fields.
         struct Key(&'static [&'static str]);
@@ -1395,7 +1451,7 @@ impl<'de> serde::de::DeserializeSeed<'de> for TopLevelFields {
                             fields.insert(key.to_string(), map.next_value()?);
                         }
                         None => {
-                            map.next_value::<IgnoredAny>()?;
+                            map.next_value::<Skip>()?;
                         }
                     }
                 }
@@ -1403,7 +1459,7 @@ impl<'de> serde::de::DeserializeSeed<'de> for TopLevelFields {
             }
 
             fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                while seq.next_element::<Skip>()?.is_some() {}
                 Ok(serde_json::Map::new())
             }
 
@@ -1639,6 +1695,34 @@ mod tests {
             assert!(
                 TopLevelFields(&["bin"]).from_slice(doc.as_bytes()).is_err(),
                 "{doc}"
+            );
+        }
+    }
+
+    #[test]
+    fn top_level_fields_check_skipped_values_like_a_value_parse() {
+        let docs: [&[u8]; 12] = [
+            b"{\"x\":\"\xff\xfe\",\"bin\":1}",
+            b"{\"x\":{\"y\":[\"\xc3\"]},\"bin\":1}",
+            b"{\"\xff\":1,\"bin\":1}",
+            b"{\"x\":\"\\uZZZZ\",\"bin\":1}",
+            b"{\"x\":\"\\ud800\",\"bin\":1}",
+            b"{\"x\":[{\"\\udc00\":1}],\"bin\":1}",
+            b"{\"x\":1e400,\"bin\":1}",
+            b"{\"x\":[{\"y\":-1e400}],\"bin\":1}",
+            b"{\"x\":18446744073709551616,\"bin\":1}",
+            b"{\"x\":\"\\ud83d\\ude00 caf\xc3\xa9\",\"bin\":1}",
+            b"{\"x\":[1.5e300,-0,{\"y\":null}],\"bin\":1}",
+            b"[\"\\ud800\"]",
+        ];
+        for doc in docs {
+            let full = serde_json::from_slice::<serde_json::Value>(doc);
+            let fast = TopLevelFields(&["bin"]).from_slice(doc);
+            assert_eq!(
+                fast.is_ok(),
+                full.is_ok(),
+                "{}",
+                String::from_utf8_lossy(doc)
             );
         }
     }
