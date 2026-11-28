@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.1](https://github.com/aubepkg/aube/compare/aube-resolver-v2.11.0...aube-resolver-v2.11.1) - 2026-11-28
+
+### Fixed
+
+- *(resolver)* keep concurrent builds from deleting each other's primer JSON ([#1994](https://github.com/aubepkg/aube/pull/1994))
+
+### Other
+
+- *(resolver)* reuse peer suffix rewrites within each propagation pass ([#2001](https://github.com/aubepkg/aube/pull/2001))
+
 ## [2.11.0](https://github.com/aubepkg/aube/compare/aube-resolver-v2.10.1...aube-resolver-v2.11.0) - 2026-11-22
 
 ### Added

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.1](https://github.com/aubepkg/aube/compare/aube-linker-v2.11.0...aube-linker-v2.11.1) - 2026-11-28
+
+### Fixed
+
+- *(linker)* publish shared hidden-hoist junctions atomically on Windows ([#1992](https://github.com/aubepkg/aube/pull/1992))
+
+### Other
+
+- *(gvs)* reuse shared entries without indexes and trim the link phase ([#1998](https://github.com/aubepkg/aube/pull/1998))
+
 ## [2.11.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.10.1...aube-linker-v2.11.0) - 2026-11-22
 
 ### Fixed

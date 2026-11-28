@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.1](https://github.com/aubepkg/aube/compare/aube-manifest-v2.11.0...aube-manifest-v2.11.1) - 2026-11-28
+
+### Other
+
+- *(install)* read only the manifest fields install needs ([#2002](https://github.com/aubepkg/aube/pull/2002))
+
 ## [2.10.1](https://github.com/aubepkg/aube/compare/aube-manifest-v2.10.0...aube-manifest-v2.10.1) - 2026-11-16
 
 ### Fixed

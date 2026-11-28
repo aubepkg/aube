@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.1](https://github.com/aubepkg/aube/compare/aube-store-v2.11.0...aube-store-v2.11.1) - 2026-11-28
+
+### Other
+
+- fix clippy lints reported by Rust 1.101 beta ([#1991](https://github.com/aubepkg/aube/pull/1991))
+
 ## [2.10.1](https://github.com/aubepkg/aube/compare/aube-store-v2.10.0...aube-store-v2.10.1) - 2026-11-16
 
 ### Other

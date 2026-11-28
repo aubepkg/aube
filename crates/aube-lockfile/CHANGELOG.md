@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.1](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.11.0...aube-lockfile-v2.11.1) - 2026-11-28
+
+### Other
+
+- *(lockfile)* parse package subsets in parallel and index the graph hash ([#1996](https://github.com/aubepkg/aube/pull/1996))
+- fix clippy lints reported by Rust 1.101 beta ([#1991](https://github.com/aubepkg/aube/pull/1991))
+
 ## [2.11.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.10.1...aube-lockfile-v2.11.0) - 2026-11-22
 
 ### Added
